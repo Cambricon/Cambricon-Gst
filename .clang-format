@@ -1,0 +1,8 @@
+# Run manually to reformat a file:
+# clang-format -i <file>
+BasedOnStyle:           Mozilla
+ColumnLimit:            120
+BinPackParameters:	    false
+BinPackArguments:	      true
+ReflowComments:         false
+SortIncludes:           false
