@@ -20,13 +20,13 @@
 #include <gst/gst.h>
 
 #ifdef WITH_DECODE
-#include "decode/gstcndecode.h"
+#include "decode/gstcnvideo_dec.h"
 #endif
 #ifdef WITH_CONVERT
 #include "convert/gstcnconvert.h"
 #endif
 #ifdef WITH_ENCODE
-#include "encode/gstcnencode.h"
+#include "encode/gstcnvideo_enc.h"
 #endif
 
 #ifndef PACKAGE
@@ -34,7 +34,7 @@
 #endif
 
 #ifndef VERSION
-#define VERSION "1.0"
+#define VERSION "1.1"
 #endif
 
 GST_DEBUG_CATEGORY(gst_cambricon_debug);
@@ -52,16 +52,16 @@ plugin_init(GstPlugin* plugin)
   /* debug category for fltering log messages */
   GST_DEBUG_CATEGORY_INIT(gst_cambricon_debug,
                           "cambricon",
-                          GST_DEBUG_BG_WHITE | GST_DEBUG_FG_BLUE,
+                          GST_DEBUG_BG_BLUE | GST_DEBUG_FG_WHITE,
                           "Cambricon Neuware Stream Kit debug category");
 #ifdef WITH_DECODE
-  ret &= gst_element_register(plugin, "cndecode", GST_RANK_NONE, GST_TYPE_CNDECODE);
+  ret &= gst_element_register(plugin, "cnvideo_dec", GST_RANK_NONE, GST_TYPE_CNVIDEODEC);
 #endif
 #ifdef WITH_CONVERT
   ret &= gst_element_register(plugin, "cnconvert", GST_RANK_NONE, GST_TYPE_CNCONVERT);
 #endif
 #ifdef WITH_ENCODE
-  ret &= gst_element_register(plugin, "cnencode", GST_RANK_NONE, GST_TYPE_CNENCODE);
+  ret &= gst_element_register(plugin, "cnvideo_enc", GST_RANK_NONE, GST_TYPE_CNVIDEOENC);
 #endif
   return ret;
 }

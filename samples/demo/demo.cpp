@@ -127,9 +127,9 @@ int main (int argc, char **argv) {
 
   src = gst_element_factory_make ("uridecodebin", "src");
   parse = gst_element_factory_make ("h264parse", "parse");
-  dec = gst_element_factory_make ("cndecode", "dec");
+  dec = gst_element_factory_make ("cnvideo_dec", "dec");
   convert = gst_element_factory_make ("cnconvert", "convert");
-  encode = gst_element_factory_make ("cnencode", "enc");
+  encode = gst_element_factory_make ("cnvideo_enc", "enc");
   sink = gst_element_factory_make("filesink", "sink");
 
   CHECK ((pipeline && convert && sink &&

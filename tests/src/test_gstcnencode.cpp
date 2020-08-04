@@ -17,27 +17,28 @@
  *  along with CNStream-Gst.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#ifdef WITH_ENCODE
+
 #include <gst/check/gstcheck.h>
 #include <gst/video/video.h>
 #include <unistd.h>
 
 #include <cstdio>
 
-#include "easycodec/vformat.h"
+#include "cn_codec_common.h"
 
 static GstStaticPadTemplate srctemplate =
   GST_STATIC_PAD_TEMPLATE("src",
                           GST_PAD_SRC,
                           GST_PAD_ALWAYS,
-                          GST_STATIC_CAPS(GST_VIDEO_CAPS_MAKE("{ NV21, NV12, BGRA, RGBA, ABGR, ARGB }")));
+                          GST_STATIC_CAPS(GST_VIDEO_CAPS_MAKE("{ NV21, NV12, I420, BGRA, RGBA, ABGR, ARGB }")));
 
 static GstStaticPadTemplate sinktemplate =
   GST_STATIC_PAD_TEMPLATE("sink",
                           GST_PAD_SINK,
                           GST_PAD_ALWAYS,
                           GST_STATIC_CAPS("video/x-h264, stream-format=byte-stream, alignment=nal;"
-                                          "video/x-h265, stream-format=byte-stream, alignment=nal;"
-                                          "image/jpeg"));
+                                          "video/x-h265, stream-format=byte-stream, alignment=nal;"));
 
 static GstPad *mysinkpad, *mysrcpad;
 static const char *input_name = NULL, *output_name = NULL;
@@ -186,38 +187,9 @@ save_output(GstBuffer* buffer)
 static GstFlowReturn
 mysinkpad_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer)
 {
-  // g_print("mysinkpad_chain: received buffer %p(%d)\n",
-  //    buffer, GST_MINI_OBJECT_CAST(buffer)->refcount);
-  gboolean nn = FALSE;
-
-  if (input_count > 1 && output_name[strlen(output_name) - 3] == 'j' && output_name[strlen(output_name) - 2] == 'p' &&
-      output_name[strlen(output_name) - 1] == 'g') {
-    if (output_file) {
-      fclose(output_file);
-      remove(output_name);
-    }
-
-    char new_name[1024] = { 0 };
-    memcpy(new_name, output_name, strlen(output_name) - 4);
-    snprintf(&new_name[strlen(output_name) - 4], sizeof(new_name) - strlen(output_name) - 5, "_%d.jpg", output_count);
-
-    // g_print("save to \"%s\"\n", new_name);
-
-    output_file = fopen(new_name, "wb");
-    fail_unless(output_file != NULL);
-
-    nn = TRUE;
-  }
-
   save_output(buffer);
 
   gst_buffer_unref(buffer);
-
-  if (nn && output_file) {
-    fflush(output_file);
-    fclose(output_file);
-    output_file = NULL;
-  }
 
   output_count++;
 
@@ -260,9 +232,9 @@ mysinkpad_event(GstPad* pad, GstObject* parent, GstEvent* event)
 }
 
 static GstElement*
-setup_cnencode(const gchar* src_caps_str, const gchar* codec_type)
+setup_cnvideoenc(const gchar* src_caps_str, cncodecType codec_type)
 {
-  GstElement* cnencode;
+  GstElement* cnvideoenc;
   GstCaps* srccaps = NULL;
 
   if (src_caps_str) {
@@ -270,15 +242,15 @@ setup_cnencode(const gchar* src_caps_str, const gchar* codec_type)
     fail_unless(srccaps != NULL);
   }
   // check factory make element
-  cnencode = gst_check_setup_element("cnencode");
-  fail_unless(cnencode != NULL);
+  cnvideoenc = gst_check_setup_element("cnvideo_enc");
+  fail_unless(cnvideoenc != NULL);
 
-  g_object_set(cnencode, "silent", TRUE, NULL);
+  g_object_set(cnvideoenc, "silent", TRUE, "codec", codec_type, NULL);
 
   // check element's sink pad link
-  mysrcpad = gst_check_setup_src_pad(cnencode, &srctemplate);
+  mysrcpad = gst_check_setup_src_pad(cnvideoenc, &srctemplate);
   // check element's src pad link
-  mysinkpad = gst_check_setup_sink_pad(cnencode, &sinktemplate);
+  mysinkpad = gst_check_setup_sink_pad(cnvideoenc, &sinktemplate);
 
   gst_pad_set_chain_function(mysinkpad, GST_DEBUG_FUNCPTR(mysinkpad_chain));
   gst_pad_set_event_function(mysinkpad, GST_DEBUG_FUNCPTR(mysinkpad_event));
@@ -287,58 +259,58 @@ setup_cnencode(const gchar* src_caps_str, const gchar* codec_type)
   gst_pad_set_active(mysinkpad, TRUE);
 
   // check START/SEGMENT/CAPS event
-  gst_check_setup_events(mysrcpad, cnencode, srccaps, GST_FORMAT_TIME);
+  gst_check_setup_events(mysrcpad, cnvideoenc, srccaps, GST_FORMAT_TIME);
 
   // check element state change
-  fail_unless(gst_element_set_state(cnencode, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
+  fail_unless(gst_element_set_state(cnvideoenc, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE,
               "could not set to playing");
 
   if (srccaps)
     gst_caps_unref(srccaps);
 
   buffers = NULL;
-  return cnencode;
+  return cnvideoenc;
 }
 
 static void
-cleanup_cnencode(GstElement* cnencode)
+cleanup_cnvideoenc(GstElement* cnvideoenc)
 {
   /* Free parsed buffers */
   gst_check_drop_buffers();
 
   gst_pad_set_active(mysrcpad, FALSE);
   gst_pad_set_active(mysinkpad, FALSE);
-  gst_check_teardown_src_pad(cnencode);
-  gst_check_teardown_sink_pad(cnencode);
-  gst_check_teardown_element(cnencode);
+  gst_check_teardown_src_pad(cnvideoenc);
+  gst_check_teardown_sink_pad(cnvideoenc);
+  gst_check_teardown_element(cnvideoenc);
 }
 
 // check element factory make, this equals to gst_check_setup_element
-GST_START_TEST(test_cnencode_create_destroy)
+GST_START_TEST(test_cnvideoenc_create_destroy)
 {
-  GstElement* cnencode;
+  GstElement* cnvideoenc;
 
-  g_print("test_cnencode_create_destroy()\n");
+  g_print("test_cnvideoenc_create_destroy()\n");
   g_print("cwd: %s\n", GetExePath());
 
-  cnencode = gst_element_factory_make("cnencode", NULL);
-  gst_object_unref(cnencode);
+  cnvideoenc = gst_element_factory_make("cnvideo_enc", NULL);
+  gst_object_unref(cnvideoenc);
 }
 GST_END_TEST;
 
 // check out caps
-GST_START_TEST(test_cnencode_outcaps)
+GST_START_TEST(test_cnvideoenc_outcaps)
 {
-  GstElement* cnencode;
+  GstElement* cnvideoenc;
   GstCaps *outcaps, *srccaps = NULL;
 
-  g_print("test_cnencode_outcaps()\n");
+  g_print("test_cnvideoenc_outcaps()\n");
 
   // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV21,"
+  cnvideoenc = setup_cnvideoenc("video/x-raw,format=(string)NV21,"
                             "width=(int)1920,height=(int)1080,"
                             "framerate=(fraction)25/1",
-                            "H264");
+                            CNCODEC_H264);
 
   outcaps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=nal,"
                                  "width=(int)1920,height=(int)1080,"
@@ -356,35 +328,32 @@ GST_START_TEST(test_cnencode_outcaps)
   // fail_unless (gst_pad_push_event (mysrcpad, gst_event_new_eos ()));
 
   // tear down the element
-  cleanup_cnencode(cnencode);
+  cleanup_cnvideoenc(cnvideoenc);
 }
 GST_END_TEST;
 
-GST_START_TEST(test_cnencode_property)
+GST_START_TEST(test_cnvideoenc_property)
 {
-  GstElement* cnencode;
+  GstElement* cnvideoenc;
 
-  g_print("test_cnencode_property()\n");
+  g_print("test_cnvideoenc_property()\n");
 
   // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV21,"
+  cnvideoenc = setup_cnvideoenc("video/x-raw,format=(string)NV21,"
                             "width=(int)720,height=(int)480,"
                             "framerate=(fraction)25/1",
-                            "H264");
+                            CNCODEC_H264);
 
-  gboolean vbr, crop_enable;
+  gboolean vbr;
   gint id, prof, level;
-  guint gop, p, b, cabac, gop_type, br, max_br, max_qp, min_qp, jqual, x, y, w, h;
-  g_object_set(G_OBJECT(cnencode), "device-id", 0, "rc-vbr", TRUE, "rc-gop", 50, "video-profile", 3, "video-level", 5,
-               "p-frame-num", 30, "b-frame-num", 10, "cabac-init-idc", 1, "gop-type", 2, "rc-bitrate", 512,
-               "rc-max-bitrate", 1024, "rc-max-qp", 50, "rc-min-qp", 20, "jpeg-quality", 99, "crop-enable", TRUE,
-               "crop-x", 4, "crop-y", 3, "crop-w", 102, "crop-h", 202, NULL);
+  guint gop, p, b, gop_type, br, max_br, max_qp, min_qp;
+  g_object_set(G_OBJECT(cnvideoenc), "device-id", 0, "vbr", TRUE, "gop-length", 50, "profile", 3, "level", 5,
+               "i-frame-interval", 30, "b-frame-num", 10, "gop-type", 2, "bitrate", 512,
+               "max-bitrate", 1024, "max-qp", 50, "min-qp", 20, NULL);
 
-  g_object_get(G_OBJECT(cnencode), "device-id", &id, "rc-vbr", &vbr, "rc-gop", &gop, "video-profile", &prof,
-               "video-level", &level, "p-frame-num", &p, "b-frame-num", &b, "cabac-init-idc", &cabac, "gop-type",
-               &gop_type, "rc-bitrate", &br, "rc-max-bitrate", &max_br, "rc-max-qp", &max_qp, "rc-min-qp", &min_qp,
-               "jpeg-quality", &jqual, "crop-enable", &crop_enable, "crop-x", &x, "crop-y", &y, "crop-w", &w, "crop-h",
-               &h, NULL);
+  g_object_get(G_OBJECT(cnvideoenc), "device-id", &id, "vbr", &vbr, "gop-length", &gop, "profile", &prof,
+               "level", &level, "i-frame-interval", &p, "b-frame-num", &b, "gop-type",
+               &gop_type, "bitrate", &br, "max-bitrate", &max_br, "max-qp", &max_qp, "min-qp", &min_qp, NULL);
 
   fail_unless_equals_int(id, 0);
   fail_unless_equals_int(prof, 3);
@@ -392,39 +361,28 @@ GST_START_TEST(test_cnencode_property)
   fail_unless_equals_int(gop, 50);
   fail_unless_equals_int(p, 30);
   fail_unless_equals_int(b, 10);
-  fail_unless_equals_int(cabac, 1);
   fail_unless_equals_int(gop_type, 2);
   fail_unless_equals_int(br, 512);
   fail_unless_equals_int(max_br, 1024);
   fail_unless_equals_int(max_qp, 50);
   fail_unless_equals_int(min_qp, 20);
-  fail_unless_equals_int(jqual, 99);
-  fail_unless_equals_int(x, 4);
-  fail_unless_equals_int(y, 3);
-  fail_unless_equals_int(w, 102);
-  fail_unless_equals_int(h, 202);
 
   // tear down the element
-  cleanup_cnencode(cnencode);
+  cleanup_cnvideoenc(cnvideoenc);
 }
 GST_END_TEST;
 
-GST_START_TEST(test_cnencode_NV21_H264)
+GST_START_TEST(test_cnvideoenc_NV21_H264)
 {
-  GstElement* cnencode;
-  GstCaps* outcaps;
+  GstElement* cnvideoenc;
 
-  g_print("test_cnencode_NV21_H264()\n");
+  g_print("test_cnvideoenc_NV21_H264()\n");
 
   // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV21,"
+  cnvideoenc = setup_cnvideoenc("video/x-raw,format=(string)NV21,"
                             "width=(int)1280,height=(int)720,"
                             "framerate=(fraction)25/1",
-                            "H264");
-
-  outcaps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=nal,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
+                            CNCODEC_H264);
 
   setup_stream("../tests/data/cars_nv21.yuv", "cars_nv21.h264");
   feed_stream(GST_VIDEO_FORMAT_NV21, 1280, 720);
@@ -438,29 +396,22 @@ GST_START_TEST(test_cnencode_NV21_H264)
 
   cleanup_stream();
 
-  gst_caps_unref(outcaps);
-
   // tear down the element
-  cleanup_cnencode(cnencode);
+  cleanup_cnvideoenc(cnvideoenc);
 }
 GST_END_TEST;
 
-GST_START_TEST(test_cnencode_NV12_H264)
+GST_START_TEST(test_cnvideoenc_NV12_H264)
 {
-  GstElement* cnencode;
-  GstCaps* outcaps;
+  GstElement* cnvideoenc;
 
-  g_print("test_cnencode_NV12_H264()\n");
+  g_print("test_cnvideoenc_NV12_H264()\n");
 
   // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV12,"
+  cnvideoenc = setup_cnvideoenc("video/x-raw,format=(string)NV12,"
                             "width=(int)1280,height=(int)720,"
                             "framerate=(fraction)25/1",
-                            "H264");
-
-  outcaps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=nal,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
+                            CNCODEC_H264);
 
   setup_stream("../tests/data/cars_nv12.yuv", "cars_nv12.h264");
   feed_stream(GST_VIDEO_FORMAT_NV12, 1280, 720);
@@ -474,29 +425,22 @@ GST_START_TEST(test_cnencode_NV12_H264)
 
   cleanup_stream();
 
-  gst_caps_unref(outcaps);
-
   // tear down the element
-  cleanup_cnencode(cnencode);
+  cleanup_cnvideoenc(cnvideoenc);
 }
 GST_END_TEST;
 
-GST_START_TEST(test_cnencode_NV12_H265)
+GST_START_TEST(test_cnvideoenc_NV12_H265)
 {
-  GstElement* cnencode;
-  GstCaps* outcaps;
+  GstElement* cnvideoenc;
 
-  g_print("test_cnencode_NV12_H265()\n");
+  g_print("test_cnvideoenc_NV12_H265()\n");
 
   // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV12,"
+  cnvideoenc = setup_cnvideoenc("video/x-raw,format=(string)NV12,"
                             "width=(int)1280,height=(int)720,"
                             "framerate=(fraction)25/1",
-                            "H265");
-
-  outcaps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=nal,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
+                            CNCODEC_HEVC);
 
   setup_stream("../tests/data/cars_nv12.yuv", "cars_nv12.h265");
   feed_stream(GST_VIDEO_FORMAT_NV12, 1280, 720);
@@ -510,105 +454,24 @@ GST_START_TEST(test_cnencode_NV12_H265)
 
   cleanup_stream();
 
-  gst_caps_unref(outcaps);
-
   // tear down the element
-  cleanup_cnencode(cnencode);
+  cleanup_cnvideoenc(cnvideoenc);
 }
 GST_END_TEST;
 
-GST_START_TEST(test_cnencode_BGRA_H264)
+GST_START_TEST(test_cnvideoenc_NV21_H265)
 {
-  GstElement* cnencode;
-  GstCaps* outcaps;
+  GstElement* cnvideoenc;
 
-  g_print("test_cnencode_BGRA_H264()\n");
+  g_print("test_cnvideoenc_NV21_H265()\n");
 
   // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)BGRA,"
+  cnvideoenc = setup_cnvideoenc("video/x-raw,format=(string)NV21,"
                             "width=(int)1280,height=(int)720,"
                             "framerate=(fraction)25/1",
-                            "H264");
+                            CNCODEC_HEVC);
 
-  outcaps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=nal,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
-
-  setup_stream("../tests/data/cars_bgr.yuv", "cars_bgra.h264");
-  feed_stream(GST_VIDEO_FORMAT_BGRA, 1280, 720);
-
-  // wait encoder finish encoding work
-  while (got_eos == FALSE) {
-    usleep(10000);
-  }
-
-  // g_print("encoder finished encoding!\n");
-
-  cleanup_stream();
-
-  gst_caps_unref(outcaps);
-
-  // tear down the element
-  cleanup_cnencode(cnencode);
-}
-GST_END_TEST;
-
-GST_START_TEST(test_cnencode_RGBA_H264)
-{
-  GstElement* cnencode;
-  GstCaps* outcaps;
-
-  g_print("test_cnencode_RGBA_H264()\n");
-
-  // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)RGBA,"
-                            "width=(int)1280,height=(int)720,"
-                            "framerate=(fraction)25/1",
-                            "H264");
-
-  outcaps = gst_caps_from_string("video/x-h264,stream-format=byte-stream,alignment=nal,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
-
-  setup_stream("../tests/data/cars_rgb.yuv", "cars_rgba.h264");
-  feed_stream(GST_VIDEO_FORMAT_RGBA, 1280, 720);
-
-  // wait encoder finish encoding work
-  while (got_eos == FALSE) {
-    usleep(10000);
-  }
-
-  // g_print("encoder finished encoding!\n");
-
-  cleanup_stream();
-
-  gst_caps_unref(outcaps);
-
-  // tear down the element
-  cleanup_cnencode(cnencode);
-}
-GST_END_TEST;
-
-GST_START_TEST(test_cnencode_NV21_JPEG)
-{
-  GstElement* cnencode;
-  GstCaps* outcaps;
-
-  g_print("test_cnencode_NV21_JPEG()\n");
-
-  // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV21,"
-                            "width=(int)1280,height=(int)720,"
-                            "framerate=(fraction)25/1",
-                            "JPEG");
-
-  outcaps = gst_caps_from_string("image/jpeg,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
-
-  // fail_unless(gst_pad_set_caps(mysinkpad, outcaps));
-
-  setup_stream("../tests/data/cars_nv21.yuv", "cars_nv21.jpg");
+  setup_stream("../tests/data/cars_nv21.yuv", "cars_nv21.h265");
   feed_stream(GST_VIDEO_FORMAT_NV21, 1280, 720);
 
   // wait encoder finish encoding work
@@ -620,141 +483,28 @@ GST_START_TEST(test_cnencode_NV21_JPEG)
 
   cleanup_stream();
 
-  gst_caps_unref(outcaps);
-
   // tear down the element
-  cleanup_cnencode(cnencode);
-}
-GST_END_TEST;
-
-GST_START_TEST(test_cnencode_NV12_JPEG)
-{
-  GstElement* cnencode;
-  GstCaps* outcaps;
-
-  g_print("test_cnencode_NV12_JPEG()\n");
-
-  // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)NV12,"
-                            "width=(int)1280,height=(int)720,"
-                            "framerate=(fraction)25/1",
-                            "JPEG");
-
-  outcaps = gst_caps_from_string("image/jpeg,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
-
-  setup_stream("../tests/data/cars_nv12.yuv", "cars_nv12.jpg");
-  feed_stream(GST_VIDEO_FORMAT_NV12, 1280, 720);
-
-  // wait encoder finish encoding work
-  while (got_eos == FALSE) {
-    usleep(10000);
-  }
-
-  // g_print("encoder finished encoding!\n");
-
-  cleanup_stream();
-
-  gst_caps_unref(outcaps);
-
-  // tear down the element
-  cleanup_cnencode(cnencode);
-}
-GST_END_TEST;
-
-GST_START_TEST(test_cnencode_BGRA_JPEG)
-{
-  GstElement* cnencode;
-  GstCaps* outcaps;
-
-  g_print("test_cnencode_BGRA_JPEG()\n");
-
-  // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)BGRA,"
-                            "width=(int)1280,height=(int)720,"
-                            "framerate=(fraction)25/1",
-                            "JPEG");
-
-  outcaps = gst_caps_from_string("image/jpeg,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
-
-  setup_stream("../tests/data/cars_bgr.yuv", "cars_bgra.jpg");
-  feed_stream(GST_VIDEO_FORMAT_BGRA, 1280, 720);
-
-  // wait encoder finish encoding work
-  while (got_eos == FALSE) {
-    usleep(10000);
-  }
-
-  // g_print("encoder finished encoding!\n");
-
-  cleanup_stream();
-
-  gst_caps_unref(outcaps);
-
-  // tear down the element
-  cleanup_cnencode(cnencode);
-}
-GST_END_TEST;
-
-GST_START_TEST(test_cnencode_RGBA_JPEG)
-{
-  GstElement* cnencode;
-  GstCaps* outcaps;
-
-  g_print("test_cnencode_RGBA_JPEG()\n");
-
-  // setup the element for testing
-  cnencode = setup_cnencode("video/x-raw,format=(string)RGBA,"
-                            "width=(int)1280,height=(int)720,"
-                            "framerate=(fraction)25/1",
-                            "JPEG");
-
-  outcaps = gst_caps_from_string("image/jpeg,"
-                                 "width=(int)1280,height=(int)720,"
-                                 "framerate=(fraction)25/1");
-
-  setup_stream("../tests/data/cars_rgb.yuv", "cars_rgba.jpg");
-  feed_stream(GST_VIDEO_FORMAT_RGBA, 1280, 720);
-
-  // wait encoder finish encoding work
-  while (got_eos == FALSE) {
-    usleep(10000);
-  }
-
-  // g_print("encoder finished encoding!\n");
-
-  cleanup_stream();
-
-  gst_caps_unref(outcaps);
-
-  // tear down the element
-  cleanup_cnencode(cnencode);
+  cleanup_cnvideoenc(cnvideoenc);
 }
 GST_END_TEST;
 
 Suite*
-cnencode_suite(void)
+cnvideoenc_suite(void)
 {
-  Suite* s = suite_create("cnencode");
+  Suite* s = suite_create("cnvideo_enc");
   TCase* tc_chain = tcase_create("general");
 
   suite_add_tcase(s, tc_chain);
 
-  tcase_add_test(tc_chain, test_cnencode_create_destroy);
-  tcase_add_test(tc_chain, test_cnencode_outcaps);
-  tcase_add_test(tc_chain, test_cnencode_property);
-  tcase_add_test(tc_chain, test_cnencode_NV12_H264);
-  tcase_add_test(tc_chain, test_cnencode_NV21_H264);
-  tcase_add_test(tc_chain, test_cnencode_BGRA_H264);
-  tcase_add_test(tc_chain, test_cnencode_RGBA_H264);
-  tcase_add_test(tc_chain, test_cnencode_NV21_JPEG);
-  tcase_add_test(tc_chain, test_cnencode_NV12_JPEG);
-  tcase_add_test(tc_chain, test_cnencode_RGBA_JPEG);
-  tcase_add_test(tc_chain, test_cnencode_BGRA_JPEG);
-  tcase_add_test(tc_chain, test_cnencode_NV12_H265);
+  tcase_add_test(tc_chain, test_cnvideoenc_create_destroy);
+  tcase_add_test(tc_chain, test_cnvideoenc_outcaps);
+  tcase_add_test(tc_chain, test_cnvideoenc_property);
+  tcase_add_test(tc_chain, test_cnvideoenc_NV12_H264);
+  tcase_add_test(tc_chain, test_cnvideoenc_NV21_H264);
+  tcase_add_test(tc_chain, test_cnvideoenc_NV12_H265);
+  tcase_add_test(tc_chain, test_cnvideoenc_NV21_H265);
 
   return s;
 }
+
+#endif  // WITH_ENCODE

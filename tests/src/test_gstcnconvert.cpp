@@ -17,6 +17,8 @@
  *  along with CNStream-Gst.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#ifdef WITH_CONVERT
+
 #include <gst/check/gstbufferstraw.h>
 #include <gst/check/gstcheck.h>
 #include <unistd.h>
@@ -30,14 +32,14 @@ static GstStaticPadTemplate sink_template =
   GST_STATIC_PAD_TEMPLATE("sink",
                           GST_PAD_SINK,
                           GST_PAD_ALWAYS,
-                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21};"));
+                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, I420};"));
 
 static GstStaticPadTemplate src_template =
   GST_STATIC_PAD_TEMPLATE("src",
                           GST_PAD_SRC,
                           GST_PAD_ALWAYS,
-                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, RGBA, ARGB, BGRA, ABGR};"
-                                          "video/x-raw, format={NV12, NV21, RGBA, ARGB, BGRA, ABGR};"));
+                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, I420, RGBA, ARGB, BGRA, ABGR};"
+                                          "video/x-raw, format={NV12, NV21, I420, RGBA, ARGB, BGRA, ABGR};"));
 
 const char* in_caps_str = "video/x-raw(memory:mlu), format=NV12, width=1280, height=720;";
 
@@ -216,7 +218,7 @@ GST_START_TEST(test_chain_func)
   pipeline = gst_pipeline_new("pipeline");
   source = gst_check_setup_element("uridecodebin");
   parser = gst_check_setup_element("h264parse");
-  decode = gst_check_setup_element("cndecode");
+  decode = gst_check_setup_element("cnvideo_dec");
   convert = gst_check_setup_element("cnconvert");
   appsink = gst_check_setup_element("appsink");
   GstCaps* caps = gst_caps_new_empty_simple("video/x-h264");
@@ -259,3 +261,5 @@ cnconvert_suite(void)
   tcase_add_test(tc_chain, test_chain_func);
   return s;
 }
+
+#endif  // WITH_CONVERT

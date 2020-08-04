@@ -17,24 +17,24 @@
  *  along with CNStream-Gst.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef GST_CNDECODE_H_
-#define GST_CNDECODE_H_
+#ifndef GST_CNVIDEO_DEC_H_
+#define GST_CNVIDEO_DEC_H_
 
 #include <gst/gst.h>
 
-#define GST_TYPE_CNDECODE (gst_cndecode_get_type())
-#define GST_CNDECODE(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_CNDECODE, GstCndecode))
-#define GST_CNDECODE_CLASS(klass) (G_TYPE_CHECK_CLASS_CAST((klass), GST_TYPE_CNDECODE, GstCndecodeClass))
-#define GST_IS_CNDECODE(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj), GST_TYPE_CNDECODE))
-#define GST_IS_CNDECODE_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass), GST_TYPE_CNDECODE))
-#define GST_CNDECODE_GET_CLASS(obj) (G_TYPE_INSTANCE_GET_CLASS((obj), GST_TYPE_CNDECODE, GstCndecodeClass))
+#define GST_TYPE_CNVIDEODEC (gst_cnvideodec_get_type())
+#define GST_CNVIDEODEC(obj) (G_TYPE_CHECK_INSTANCE_CAST((obj), GST_TYPE_CNVIDEODEC, GstCnvideodec))
+#define GST_CNVIDEODEC_CLASS(klass) (G_TYPE_CHECK_CLASS_CAST((klass), GST_TYPE_CNVIDEODEC, GstCnvideodecClass))
+#define GST_IS_CNVIDEODEC(obj) (G_TYPE_CHECK_INSTANCE_TYPE((obj), GST_TYPE_CNVIDEODEC))
+#define GST_IS_CNVIDEODEC_CLASS(klass) (G_TYPE_CHECK_CLASS_TYPE((klass), GST_TYPE_CNVIDEODEC))
+#define GST_CNVIDEODEC_GET_CLASS(obj) (G_TYPE_INSTANCE_GET_CLASS((obj), GST_TYPE_CNVIDEODEC, GstCnvideodecClass))
 
 G_BEGIN_DECLS
 
-typedef struct _GstCndecode GstCndecode;
-typedef struct _GstCndecodeClass GstCndecodeClass;
+typedef struct _GstCnvideodec GstCnvideodec;
+typedef struct _GstCnvideodecClass GstCnvideodecClass;
 
-struct _GstCndecode
+struct _GstCnvideodec
 {
   GstElement element;
   GstPad *sinkpad, *srcpad;
@@ -43,20 +43,20 @@ struct _GstCndecode
 
   gint device_id;
   guint stream_id;
+  guint input_buffer_num;
+  guint output_buffer_num;
 };
 
-struct _GstCndecodeClass
+struct _GstCnvideodecClass
 {
   GstElementClass parent_class;
-  gboolean (*start)(GstCndecode* element);
-  gboolean (*init_decoder)(GstCndecode* element);
-  gboolean (*stop)(GstCndecode* element);
-  gboolean (*destroy_decoder)(GstCndecode* element);
+  gboolean (*init_decoder)(GstCnvideodec* element);
+  gboolean (*destroy_decoder)(GstCnvideodec* element);
 };
 
 GType
-gst_cndecode_get_type(void);
+gst_cnvideodec_get_type(void);
 
 G_END_DECLS
 
-#endif // GST_CNDECODE_H_
+#endif // GST_CNVIDEO_DEC_H_

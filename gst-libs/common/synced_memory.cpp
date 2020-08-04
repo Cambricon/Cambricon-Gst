@@ -31,7 +31,7 @@
 
 #include <string>
 
-#include "easyinfer/mlu_context.h"
+#include "device/mlu_context.h"
 #include "easyinfer/mlu_memory_op.h"
 
 constexpr static uint32_t SYNCMEM_ERRMSG_LENGTH = 1024;
@@ -78,7 +78,6 @@ cn_syncedmem_free(GstSyncedMemory_t mem)
   if (mem->dev_ptr && mem->own_dev_data) {
     // set device id before call cnrt functions, or CNRT_RET_ERR_EXISTS will be returned from cnrt function
     try {
-      mem->ctx.ConfigureForThisThread();
       mem->mem_op.FreeMlu(mem->dev_ptr);
     } catch (edk::Exception& e) {
       snprintf(mem->err_msg, SYNCMEM_ERRMSG_LENGTH, "%s", e.what());
@@ -104,7 +103,6 @@ to_cpu(GstSyncedMemory_t mem)
         mem->host_ptr = malloc(mem->size);
         mem->own_host_data = true;
       }
-      mem->ctx.ConfigureForThisThread();
       mem->mem_op.MemcpyD2H(mem->host_ptr, mem->dev_ptr, mem->size, 1);
       mem->head = GST_SYNCHEAD_SYNCED;
       break;
@@ -119,13 +117,11 @@ to_mlu(GstSyncedMemory_t mem)
 {
   switch (mem->head) {
     case GST_SYNCHEAD_UNINITIALIZED:
-      mem->ctx.ConfigureForThisThread();
       mem->dev_ptr = mem->mem_op.AllocMlu(mem->size, 1);
       mem->head = GST_SYNCHEAD_AT_MLU;
       mem->own_dev_data = true;
       break;
     case GST_SYNCHEAD_AT_CPU:
-      mem->ctx.ConfigureForThisThread();
       if (NULL == mem->dev_ptr) {
         mem->dev_ptr = mem->mem_op.AllocMlu(mem->size, 1);
         mem->own_dev_data = true;
@@ -178,7 +174,6 @@ cn_syncedmem_set_dev_data(GstSyncedMemory_t mem, void* data)
   }
   if (mem->own_dev_data) {
     try {
-      mem->ctx.ConfigureForThisThread();
       mem->mem_op.FreeMlu(mem->dev_ptr);
     } catch (edk::Exception& e) {
       snprintf(mem->err_msg, SYNCMEM_ERRMSG_LENGTH, "%s", e.what());
