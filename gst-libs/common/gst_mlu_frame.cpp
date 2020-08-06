@@ -20,6 +20,7 @@
 #include "gst_mlu_frame.h"
 
 #include <gst/gst.h>
+#include <cstring>
 
 #include "frame_deallocator.h"
 

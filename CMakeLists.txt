@@ -88,7 +88,7 @@ set(CNCODEC_LIBS   "$ENV{NEUWARE_HOME}/lib64/libcncodec.so")
 
 # ---[ edk
 add_subdirectory(easydk)
-set(EDK_LIBS       "cnstream-toolkit")
+set(EDK_LIBS       "easydk")
 
 set(LINK_LIBRARIES
   ${GLIB_LIBRARIES}

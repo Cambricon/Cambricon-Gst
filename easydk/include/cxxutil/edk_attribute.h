@@ -1,4 +1,11 @@
-/*copyright (C) [2019] by Cambricon, Inc.
+/*************************************************************************
+ * Copyright (C) [2019] by Cambricon, Inc. All rights reserved
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
@@ -10,13 +17,16 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  *************************************************************************/
-#ifndef _MLU270_OPS_CROPANDRESIZEYUV2YUV_KERNEL_H_
-#define _MLU270_OPS_CROPANDRESIZEYUV2YUV_KERNEL_H_
 
-void resizeKernel(
-    char* dst_gdram, char** Ysrc_gdram, char** UVsrc_gdram,
-    int s_row, int s_col, int d_row, int d_col,
-    int batch);
+/**
+ * @file edk_attribute.h
+ *
+ * Attribute macros
+ */
 
+#ifdef __GNUC__
+#define attribute_deprecated __attribute__((deprecated))
+#elif defined(_MSC_VER)
+#define attribute_deprecated __declspec(deprecated)
 #endif
 

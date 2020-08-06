@@ -7,6 +7,7 @@ Toolkit provides following modules:
 - EasyInfer: easy inference accelerator on MLU
 - EasyTrack: easy track, including feature match track and kcf track
 - EasyBang: easy Bang operator
+- EasyPlugin: easy Plugin operator
 
 ## **Cambricon Dependencies** ##
 
@@ -14,7 +15,7 @@ You can find the cambricon dependencies, including headers and libraries, in the
 
 ### Quick Start ###
 
-This section introduces how to quickly build instructions on Toolkit and how to develop your own applications based on CNStream-Toolkit.
+This section introduces how to quickly build instructions on Toolkit and how to develop your own applications based on easydk.
 
 #### **Required environments** ####
 
@@ -67,9 +68,9 @@ After finished prerequiste, you can build instructions with the following steps:
    cmake ${TOOLKIT_DIR}  # Generate native build scripts.
    ```
 
-   Cambricon CNStream-Toolkit provides a CMake script ([CMakeLists.txt](CMakeLists.txt)) to build instructions. You can download CMake for free from <http://www.cmake.org/>.
+   Cambricon easydk provides a CMake script ([CMakeLists.txt](CMakeLists.txt)) to build instructions. You can download CMake for free from <http://www.cmake.org/>.
 
-   `${TOOLKIT_DIR}` specifies the directory where CNStream-Toolkit saves for.
+   `${TOOLKIT_DIR}` specifies the directory where easydk saves for.
 
    | cmake option       | range           | default | description              |
    | ------------------ | --------------- | ------- | ------------------------ |
@@ -80,6 +81,7 @@ After finished prerequiste, you can build instructions with the following steps:
    | WITH_INFER         | ON / OFF        | ON      | build infer              |
    | WITH_TRACKER       | ON / OFF        | ON      | build tracker            |
    | WITH_BANG          | ON / OFF        | ON      | build bang               |
+   | WITH_CNPLUGIN      | ON / OFF        | OFF     | build CNPlugin           |
    | ENABLE_KCF         | ON / OFF        | ON      | build with KCF track     |
    | SANITIZE_MEMORY    | ON / OFF        | OFF     | check memory             |
    | SANITIZE_ADDRESS   | ON / OFF        | OFF     | check address            |

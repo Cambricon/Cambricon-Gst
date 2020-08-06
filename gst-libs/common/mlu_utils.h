@@ -21,7 +21,7 @@
 #define MLU_UTILS_H_
 
 #include <gst/gst.h>
-#include "easyinfer/mlu_context.h"
+#include "device/mlu_context.h"
 
 static inline gboolean
 set_cnrt_env(GstElement* self, int device_id)

@@ -28,9 +28,10 @@
 #define EASYBANG_RESIZE_AND_CONVERT_H_
 
 #include <string>
+#include "device/mlu_context.h"
+#include "cxxutil/edk_attribute.h"
 #include "cxxutil/exception.h"
 #include "easyinfer/easy_infer.h"
-#include "easyinfer/mlu_context.h"
 
 struct KernelParam;
 
@@ -77,7 +78,7 @@ class MluResizeConvertOp {
     FP16ToUINT8 = 1,  ///< Transform data type from float16 to uint8
     UINT8ToFP16 = 2,  ///< Transform data type from uint8 to float16
     UINT8ToUINT8 = 3  ///< Transform data type from uint8 to uint8
-  };                 // enum DataMode
+  };                  // enum DataMode
 
   /**
    * @brief Params to initialize resize and color convert operator
@@ -87,16 +88,36 @@ class MluResizeConvertOp {
     ColorMode color_mode = ColorMode::YUV2RGBA_NV21;
     /// Data type transform mode
     DataMode data_mode = DataMode::UINT8ToUINT8;
-    /// Input image resolution
-    uint32_t src_w, src_h, src_stride;
+    /// Input image resolution @deprecated set input image resolution in InputData
+    uint32_t src_w = 0, src_h = 0, src_stride = 0;
     /// Output image resolution
     uint32_t dst_w, dst_h;
-    /// Crop rectangle (top-left coordinate, width, height)
+    /// Crop rectangle (top-left coordinate, width, height) @deprecated set crop rectangle in InputData
     uint32_t crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
     /// Kernel batch size
     int batch_size = 1;
     /// device id
     CoreVersion core_version = CoreVersion::MLU270;
+    /// keep aspec ratio
+    bool keep_aspect_ratio = false;
+    /// the number of ipu cores used per execution.
+    /// When this value is 0, the number of cores used per execution is equal to batch_size
+    int core_number = 0;
+    /// A flag indicates the pad method, 0:padding is on both sides, 1: padding is on the right or
+    /// bottom side.
+    int padMethod = 0;
+  };
+
+  /**
+   * @brief Input data struct
+   **/
+  struct InputData {
+    /// Input image resolution
+    uint32_t src_w, src_h, src_stride;
+    /// Crop rectangle
+    uint32_t crop_x = 0, crop_y = 0, crop_w = 0, crop_h = 0;
+    /// image data, support YUV420SP NV21/NV12
+    void* planes[2];
   };
 
   /**
@@ -143,7 +164,7 @@ class MluResizeConvertOp {
    * @param src_uv[in] Operator input uv plane in MLU memory
    * @return Return 0 if invoke succeeded, otherwise return -1
    */
-  int InvokeOp(void* dst, void* src_y, void* src_uv);
+  attribute_deprecated int InvokeOp(void* dst, void* src_y, void* src_uv);
 
   /**
    * @brief Deinitialize resources
@@ -158,12 +179,22 @@ class MluResizeConvertOp {
   std::string GetLastError() const;
 
   /**
+   * @deprecated Use void BatchingUp(InputData) instead
    * @brief Batching up one yuv image
    *
    * @param src_y[in] input y plane in MLU memory
    * @param src_uv[in] input uv plane in MLU memory
+   *
+   * @attention image size set when Init called. support YUV420SP NV21/NV12
    */
-  void BatchingUp(void* src_y, void* src_uv);
+  attribute_deprecated void BatchingUp(void* src_y, void* src_uv);
+
+  /**
+   * @brief Batching up one yuv image
+   *
+   * @param input_data[in] yuv data (YUV420SP NV21/NV12)
+   **/
+  void BatchingUp(const InputData& input_data);
 
   /**
    * @brief Execute Operator and return an operator output (a whole batch)
