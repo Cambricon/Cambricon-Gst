@@ -55,8 +55,8 @@ static constexpr guint DEFAULT_GOP_LENGTH = 30;
 static constexpr guint DEFAULT_I_QP = 0;
 static constexpr guint DEFAULT_P_QP = 0;
 static constexpr guint DEFAULT_B_QP = 0;
-static constexpr guint DEFAULT_RC_BIT_RATE = 1024;
-static constexpr guint DEFAULT_RC_MAX_BIT_RATE = 2048;
+static constexpr guint DEFAULT_RC_BIT_RATE = 0x100000;
+static constexpr guint DEFAULT_RC_MAX_BIT_RATE = 0x100000;
 static constexpr guint DEFAULT_MAX_QP = 51;
 static constexpr guint DEFAULT_MIN_QP = 0;
 static constexpr guint DEFAULT_I_FRAME_INTERVAL = 0;
@@ -444,11 +444,11 @@ gst_cnvideoenc_class_init(GstCnvideoencClass* klass)
                                                     (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(
     gobject_class, PROP_RC_BIT_RATE,
-    g_param_spec_uint("bitrate", "Rate control bitrate(kbps)", "Rate control average bitrate for CBR", 2, 102400,
+    g_param_spec_uint("bitrate", "Rate control bitrate(kbps)", "Rate control average bitrate for CBR", 2, UINT_MAX,
                       DEFAULT_RC_BIT_RATE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(
     gobject_class, PROP_RC_MAX_BIT_RATE,
-    g_param_spec_uint("max-bitrate", "Rate control max bitrate(kbps)", "Rate control max bitrate for VBR", 2, 102400,
+    g_param_spec_uint("max-bitrate", "Rate control max bitrate(kbps)", "Rate control max bitrate for VBR", 2, UINT_MAX,
                       DEFAULT_RC_MAX_BIT_RATE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(gobject_class, PROP_MAX_QP,
                                   g_param_spec_uint("max-qp", "Rate control max qp", "Rate control max qp for VBR", 0,
