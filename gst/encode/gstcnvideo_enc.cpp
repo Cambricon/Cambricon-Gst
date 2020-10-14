@@ -282,11 +282,9 @@ gst_cnvideoenc_gop_type_get_type(void)
 static GType
 gst_cncodec_type_get_type(void)
 {
-  static const GEnumValue values[] = {
-    { CNCODEC_H264, "video codec type h264", "H.264" },
-    { CNCODEC_HEVC, "video codec type hevc", "H.265" },
-    { 0, NULL, NULL }
-  };
+  static const GEnumValue values[] = { { CNCODEC_H264, "video codec type h264", "H.264" },
+                                       { CNCODEC_HEVC, "video codec type hevc", "H.265" },
+                                       { 0, NULL, NULL } };
   static volatile GType id = 0;
   if (g_once_init_enter((gsize*)&id)) {
     GType _id;
@@ -332,6 +330,8 @@ struct GstCnvideoencPrivate
   cncodecPixelFormat pixel_format;
   gboolean send_eos;
   gboolean got_eos;
+  gboolean first_frame;
+  guint64 frame_id;
 
   GstCnvideoencPrivateCpp* cpp;
 };
@@ -422,8 +422,8 @@ gst_cnvideoenc_class_init(GstCnvideoencClass* klass)
                                                    (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   g_object_class_install_property(gobject_class, PROP_CODEC_TYPE,
-                                  g_param_spec_enum("codec", "codec type", "video codec type",
-                                                    GST_CNCODEC_TYPE, DEFAULT_CODEC_TYPE,
+                                  g_param_spec_enum("codec", "codec type", "video codec type", GST_CNCODEC_TYPE,
+                                                    DEFAULT_CODEC_TYPE,
                                                     (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(gobject_class, PROP_INPUT_BUFFER_NUM,
                                   g_param_spec_uint("input-buffer-num", "input buffer num", "input buffer number", 0,
@@ -472,10 +472,10 @@ gst_cnvideoenc_class_init(GstCnvideoencClass* klass)
                                                     DEFAULT_B_QP,
                                                     (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
-  g_object_class_install_property(
-    gobject_class, PROP_VIDEO_PROFILE,
-    g_param_spec_enum("profile", "video encode profile", "Profile for video encoder.", GST_CNVIDEOENC_VIDEO_PROFILE,
-                      DEFAULT_VIDEO_PROFILE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+  g_object_class_install_property(gobject_class, PROP_VIDEO_PROFILE,
+                                  g_param_spec_enum("profile", "video encode profile", "Profile for video encoder.",
+                                                    GST_CNVIDEOENC_VIDEO_PROFILE, DEFAULT_VIDEO_PROFILE,
+                                                    (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
   g_object_class_install_property(gobject_class, PROP_VIDEO_LEVEL,
                                   g_param_spec_enum("level", "video encode level", "Level for video encoder.",
                                                     GST_CNVIDEOENC_VIDEO_LEVEL, DEFAULT_VIDEO_LEVEL,
@@ -535,6 +535,7 @@ gst_cnvideoenc_init(GstCnvideoenc* self)
   priv->cpp = new GstCnvideoencPrivateCpp;
   priv->send_eos = FALSE;
   priv->got_eos = FALSE;
+  priv->frame_id = 0;
 
   priv->rate_control.rcMode = DEFAULT_RC_VBR ? CNVIDEOENC_RATE_CTRL_VBR : CNVIDEOENC_RATE_CTRL_CBR;
   priv->rate_control.gopLength = DEFAULT_GOP_LENGTH;
@@ -771,10 +772,14 @@ gst_cnvideoenc_set_caps(GstCnvideoenc* self, GstCaps* caps)
   if (priv->pixel_format == CNCODEC_PIX_FMT_RAW)
     return FALSE;
 
-  if (self->video_info.fps_n == 0)
+  // invalid fps
+  if (self->video_info.fps_n == 0 || self->video_info.fps_d == 0) {
+    GST_INFO_OBJECT(self, "use default framerate 30000/1001");
     self->video_info.fps_n = 30000;
-  if (self->video_info.fps_d == 0)
     self->video_info.fps_d = 1001;
+  } else {
+    GST_INFO_OBJECT(self, "use framerate %u/%u", self->video_info.fps_n, self->video_info.fps_d);
+  }
 
   // config src caps
   GstCnvideoencClass* klass = GST_CNVIDEOENC_GET_CLASS(self);
@@ -951,6 +956,7 @@ gst_cnvideoenc_init_encoder(GstCnvideoenc* self)
 
   // start event loop
   priv->cpp->event_loop = std::thread(&event_task_runner, self);
+  priv->first_frame = true;
 
   cnvideoEncCreateInfo params;
   memset(&params, 0, sizeof(params));
@@ -1324,8 +1330,14 @@ handle_output(GstCnvideoenc* self, cnvideoEncOutput* packet)
   }
   gst_buffer_unmap(buffer, &info);
 
-  GST_BUFFER_PTS(buffer) = packet->pts;
+  GstCnvideoencPrivate* priv = gst_cnvideoenc_get_private(self);
+  if (packet->pts == 0 && !priv->first_frame) {
+    GST_BUFFER_PTS(buffer) = (priv->frame_id++) * 1e9 / self->video_info.fps_n * self->video_info.fps_d;
+  } else {
+    GST_BUFFER_PTS(buffer) = packet->pts;
+  }
+  if (priv->first_frame)
+    priv->first_frame = false;
 
   gst_pad_push(self->srcpad, buffer);
 }
-
