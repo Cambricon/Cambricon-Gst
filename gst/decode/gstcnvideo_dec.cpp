@@ -151,7 +151,7 @@ static GstStaticPadTemplate sink_factory =
                           GST_PAD_SINK,
                           GST_PAD_ALWAYS,
                           GST_STATIC_CAPS("video/x-h264, stream-format=byte-stream, alignment=au;"
-                                          "video/x-h265;"));
+                                          "video/x-h265, stream-format=byte-stream;"));
 
 static GstStaticPadTemplate src_factory =
   GST_STATIC_PAD_TEMPLATE("src",
