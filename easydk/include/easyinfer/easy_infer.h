@@ -28,12 +28,11 @@
 #define EASYINFER_EASY_INFER_H_
 
 #include <memory>
+#include "cxxutil/edk_attribute.h"
 #include "cxxutil/exception.h"
 #include "easyinfer/model_loader.h"
 
 namespace edk {
-
-TOOLKIT_REGISTER_EXCEPTION(EasyInfer);
 
 struct MluTaskQueue;
 using MluTaskQueue_t = std::shared_ptr<MluTaskQueue>;
@@ -58,35 +57,36 @@ class EasyInfer {
   /**
    * @brief Initialize the inference helper class
    *
-   * @param ploader[in] Model loader which contain neural network offline model and informations
-   * @param batch_size[in] Batch size for inference, only supported on MLU100
-   * @param dev_id[in] init cninfer in device with origin id dev_id. only supported on MLU270
+   * @param model Model loader which contain neural network offline model and informations
+   * @param dev_id init cninfer in device with origin id dev_id. only supported on MLU270
    */
-  void Init(std::shared_ptr<ModelLoader> ploader, int batch_size, int dev_id);
+  void Init(std::shared_ptr<ModelLoader> model, int dev_id);
 
   /**
    * @brief Invoke inference function
    *
-   * @param input[in] Input data in MLU
-   * @param output[in] Output data in MLU
-   * @param hw_time[out] Hardware time of inference
+   * @param input Input data in MLU
+   * @param output Output data in MLU
+   * @param hw_time Hardware time of inference
    */
   void Run(void** input, void** output, float* hw_time = nullptr) const;
 
   /**
-   * @brief Get the model loader
+   * @brief  Async invoke inference function
    *
-   * @see ModelLoader
-   * @return Model loader
+   * @param input Input data in MLU
+   * @param output Output data in MLU
+   * @param task_queue 
    */
-  std::shared_ptr<ModelLoader> Loader() const;
+  void RunAsync(void** input, void** output, MluTaskQueue_t task_queue) const;
 
   /**
-   * @brief Get the batch size
+   * @brief Get the model loader
    *
-   * @return Batch size
+   * @see edk::ModelLoader
+   * @return Model loader
    */
-  int BatchSize() const;
+  std::shared_ptr<ModelLoader> Model() const;
 
   /**
    * @brief Get the MLU task queue, used to share MLU queue with Bang kernel

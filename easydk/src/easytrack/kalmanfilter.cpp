@@ -131,4 +131,8 @@ Matrix KalmanFilter::GatingDistance(const std::vector<BoundingBox> &measurements
   return square_maha;
 }
 
+BoundingBox KalmanFilter::GetCurPos() {
+    return {mean_[0][0], mean_[0][1], mean_[0][2], mean_[0][3]};
+}
+
 }  // namespace edk

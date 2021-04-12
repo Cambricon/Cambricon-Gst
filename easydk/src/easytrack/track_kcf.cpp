@@ -20,8 +20,6 @@
 
 #ifdef ENABLE_KCF
 
-#include <glog/logging.h>
-
 #include <algorithm>
 #include <cstring>
 #include <memory>
@@ -29,11 +27,12 @@
 #include <utility>
 #include <vector>
 
+#include "cxxutil/log.h"
 #include "device/mlu_context.h"
 #include "easyinfer/easy_infer.h"
 #include "easyinfer/mlu_memory_op.h"
-#include "easyinfer/mlu_task_queue.h"
 #include "easytrack/easy_track.h"
+#include "internal/mlu_task_queue.h"
 #include "kcf/kcf.h"
 #include "match.h"
 #include "track_data_type.h"
@@ -97,33 +96,32 @@ KcfTrack::~KcfTrack() { delete kcf_p_; }
 
 void KcfTrack::SetModel(std::shared_ptr<ModelLoader> model, int dev_id, uint32_t batch_size) {
   if (!model) {
-    throw EasyTrackError("Model is nullptr");
+    THROW_EXCEPTION(Exception::INVALID_ARG, "Model is nullptr");
   }
-  model->InitLayout();
   kcf_p_->model_loader_ = model;
   kcf_p_->device_id_ = dev_id;
   kcf_p_->batch_size_ = batch_size;
 
   edk::MluContext context;
   context.SetDeviceId(kcf_p_->device_id_);
-  context.ConfigureForThisThread();
+  context.BindDevice();
 
-  kcf_p_->yuv2gray_.Init(kcf_p_->model_loader_, kcf_p_->batch_size_, dev_id);
-  kcf_p_->mem_op_.SetLoader(kcf_p_->model_loader_);
-  kcf_p_->yuv2gray_outputs_ = kcf_p_->mem_op_.AllocMluOutput(kcf_p_->batch_size_);
+  kcf_p_->yuv2gray_.Init(kcf_p_->model_loader_, dev_id);
+  kcf_p_->mem_op_.SetModel(kcf_p_->model_loader_);
+  kcf_p_->yuv2gray_outputs_ = kcf_p_->mem_op_.AllocMluOutput();
   kcf_p_->detect_float_output_ = new float[6 * DETECT_OUT_SIZE];
   kcf_p_->detect_half_output_ = new half[6 * DETECT_OUT_SIZE];
-  kcf_p_->detect_output_ = kcf_p_->mem_op_.AllocMlu(6 * DETECT_OUT_SIZE * sizeof(half), kcf_p_->batch_size_);
-  kcf_p_->yuv2gray_input_ = kcf_p_->mem_op_.AllocMluInput(kcf_p_->batch_size_);
+  kcf_p_->detect_output_ = kcf_p_->mem_op_.AllocMlu(6 * DETECT_OUT_SIZE * sizeof(half));
+  kcf_p_->yuv2gray_input_ = kcf_p_->mem_op_.AllocMluInput();
 
-  kcf_init(&(kcf_p_->handle_), kcf_p_->yuv2gray_.GetMluQueue()->queue, 0.5);
+  kcf_init(&(kcf_p_->handle_), MluTaskQueueProxy::GetCnrtQueue(kcf_p_->yuv2gray_.GetMluQueue()), 0.5);
 }
 
 void KcfTrack::SetParams(float max_iou_distance) { max_iou_distance_ = max_iou_distance; }
 
 void KcfTrack::UpdateFrame(const TrackFrame &frame, const Objects &detects, Objects *tracks) {
   if (frame.dev_type == TrackFrame::DevType::CPU) {
-    throw EasyTrackError("CPU frame tracking has not been supported now");
+    THROW_EXCEPTION(Exception::UNSUPPORTED, "CPU frame tracking has not been supported now");
   }
   tracks->clear();
 
@@ -136,17 +134,21 @@ void KcfTrack::UpdateFrame(const TrackFrame &frame, const Objects &detects, Obje
 }
 
 KcfTrackPrivate::~KcfTrackPrivate() {
-  edk::MluContext context;
-  context.SetDeviceId(device_id_);
-  context.ConfigureForThisThread();
-  if (yuv2gray_outputs_ != nullptr) mem_op_.FreeArrayMlu(yuv2gray_outputs_, model_loader_->OutputNum());
-  if (detect_float_output_ != nullptr) delete[] detect_float_output_;
-  if (detect_half_output_ != nullptr) delete[] detect_half_output_;
-  if (detect_output_ != nullptr) mem_op_.FreeMlu(detect_output_);
-  if (yuv2gray_input_ != nullptr) mem_op_.FreeArrayMlu(yuv2gray_input_, model_loader_->InputNum());
-  delete[] rois_;
+  try {
+    edk::MluContext context;
+    context.SetDeviceId(device_id_);
+    context.BindDevice();
+    if (yuv2gray_outputs_ != nullptr) mem_op_.FreeMluOutput(yuv2gray_outputs_);
+    if (detect_float_output_ != nullptr) delete[] detect_float_output_;
+    if (detect_half_output_ != nullptr) delete[] detect_half_output_;
+    if (detect_output_ != nullptr) mem_op_.FreeMlu(detect_output_);
+    if (yuv2gray_input_ != nullptr) mem_op_.FreeMluInput(yuv2gray_input_);
+    delete[] rois_;
 
-  if (model_loader_) kcf_destroy(&handle_);
+    if (model_loader_) kcf_destroy(&handle_);
+  } catch (Exception &e) {
+    LOGE(TRACK) << e.what();
+  }
 }
 
 void KcfTrackPrivate::KcfUpdate(void *mlu_gray, uint32_t frame_index, uint32_t frame_width, uint32_t frame_height,
@@ -169,7 +171,7 @@ void KcfTrackPrivate::KcfUpdate(void *mlu_gray, uint32_t frame_index, uint32_t f
         //    obj.label, obj.score, obj.x, obj.y, obj.w, obj.h);
       }
     } else {
-      VLOG(3) << "@@@@@@ no detect result";
+      LOGD(TRACK) << "@@@@@@ no detect result";
       memset(detect_float_output_, 0, 6 * DETECT_OUT_SIZE * sizeof(float));
     }
 
@@ -177,7 +179,7 @@ void KcfTrackPrivate::KcfUpdate(void *mlu_gray, uint32_t frame_index, uint32_t f
       cnrtConvertFloatToHalf(detect_half_output_ + i, detect_float_output_[i]);
     }
 
-    mem_op_.MemcpyH2D(detect_output_, detect_half_output_, 6 * DETECT_OUT_SIZE * sizeof(half), batch_size_);
+    mem_op_.MemcpyH2D(detect_output_, detect_half_output_, 6 * DETECT_OUT_SIZE * sizeof(half));
     kcf_initKernel(&handle_, reinterpret_cast<half *>(mlu_gray), reinterpret_cast<half *>(detect_output_), rois_,
                    &track_num_);
   } else {
@@ -310,4 +312,3 @@ void KcfTrackPrivate::ProcessTrack(const std::vector<DetectObject> &det_objs, in
 }  // namespace edk
 
 #endif  // ENABLE_KCF
-

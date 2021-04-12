@@ -24,9 +24,24 @@
  * Attribute macros
  */
 
+#ifndef EDK_CXXUTIL_ATTRIBUTE_H_
+#define EDK_CXXUTIL_ATTRIBUTE_H_
+
 #ifdef __GNUC__
 #define attribute_deprecated __attribute__((deprecated))
 #elif defined(_MSC_VER)
 #define attribute_deprecated __declspec(deprecated)
+#else
+#pragma message("attribute_deprecated is not defined for this compiler")
+#define attribute_deprecated
 #endif
 
+#ifdef __GNUC__
+#define EDK_LIKELY(x) (__builtin_expect(!!(x), 1))
+#define EDK_UNLIKELY(x) (__builtin_expect(!!(x), 0))
+#else
+#define EDK_UNLIKELY(x) x
+#define EDK_LIKELY(x) x
+#endif
+
+#endif  // EDK_CXXUTIL_ATTRIBUTE_H_

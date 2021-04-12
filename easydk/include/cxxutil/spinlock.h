@@ -27,30 +27,41 @@
 #ifndef CXXUTIL_SPIN_LOCK_H_
 #define CXXUTIL_SPIN_LOCK_H_
 
+#include <pthread.h>
 #include <atomic>
+
+#include "cxxutil/noncopy.h"
 
 namespace edk {
 
+// FIXME(dmh): pthread return code is not handle
 /**
- * @brief Spin lock implementation using atomic_flag and memory_order
+ * @brief Spin lock implementation using pthread
  */
-class SpinLock {
+class SpinLock : public NonCopyable {
  public:
   /**
-   * @brief Lock the spinlock, blocks if the atomic_flag is not available
+   * @brief Construct a new SpinLock object
    */
-  void Lock() {
-    while (lock_.test_and_set(std::memory_order_acquire)) {
-    }
-  }
+  SpinLock() { pthread_spin_init(&lock_, PTHREAD_PROCESS_PRIVATE); }
+
+  /**
+   * @brief Destroy the SpinLock object
+   */
+  ~SpinLock() { pthread_spin_destroy(&lock_); }
+
+  /**
+   * @brief Lock the spinlock
+   */
+  void Lock() { pthread_spin_lock(&lock_); }
 
   /**
    * @brief Unlock the spinlock
    */
-  void Unlock() { lock_.clear(std::memory_order_release); }
+  void Unlock() { pthread_spin_unlock(&lock_); }
 
  private:
-  std::atomic_flag lock_ = ATOMIC_FLAG_INIT;
+  pthread_spinlock_t lock_;
 };
 
 /**
@@ -60,17 +71,45 @@ class SpinLockGuard {
  public:
   /**
    * Constructor, lock the spinlock in construction
-   * @param lock[in] Spin lock instance.
+   * @param lock Spin lock instance.
    */
-  explicit SpinLockGuard(SpinLock &lock) : lock_(lock) { lock_.Lock(); }
+  explicit SpinLockGuard(SpinLock &lock) : lock_(lock) {  // NOLINT
+    lock_.Lock();
+    is_locked.store(true, std::memory_order_release);
+  }
+
+  /**
+   * @brief Lock the spinlock if have not been locked by this guard
+   */
+  void Lock() {
+    if (!is_locked.load(std::memory_order_consume)) {
+      lock_.Lock();
+      is_locked.store(true, std::memory_order_release);
+    }
+  }
+
+  /**
+   * @brief Unlock the spinlock if have been locked by this guard
+   */
+  void Unlock() {
+    if (is_locked.load(std::memory_order_consume)) {
+      lock_.Unlock();
+      is_locked.store(false, std::memory_order_release);
+    }
+  }
 
   /**
    * Destructor, unlock the spinlock in destruction
    */
-  ~SpinLockGuard() { lock_.Unlock(); }
+  ~SpinLockGuard() {
+    if (is_locked.load(std::memory_order_consume)) {
+      lock_.Unlock();
+    }
+  }
 
  private:
   SpinLock &lock_;
+  std::atomic<bool> is_locked{false};
 };
 
 }  // namespace edk

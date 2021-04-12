@@ -103,7 +103,7 @@ to_cpu(GstSyncedMemory_t mem)
         mem->host_ptr = malloc(mem->size);
         mem->own_host_data = true;
       }
-      mem->mem_op.MemcpyD2H(mem->host_ptr, mem->dev_ptr, mem->size, 1);
+      mem->mem_op.MemcpyD2H(mem->host_ptr, mem->dev_ptr, mem->size);
       mem->head = GST_SYNCHEAD_SYNCED;
       break;
     case GST_SYNCHEAD_AT_CPU:
@@ -117,16 +117,16 @@ to_mlu(GstSyncedMemory_t mem)
 {
   switch (mem->head) {
     case GST_SYNCHEAD_UNINITIALIZED:
-      mem->dev_ptr = mem->mem_op.AllocMlu(mem->size, 1);
+      mem->dev_ptr = mem->mem_op.AllocMlu(mem->size);
       mem->head = GST_SYNCHEAD_AT_MLU;
       mem->own_dev_data = true;
       break;
     case GST_SYNCHEAD_AT_CPU:
       if (NULL == mem->dev_ptr) {
-        mem->dev_ptr = mem->mem_op.AllocMlu(mem->size, 1);
+        mem->dev_ptr = mem->mem_op.AllocMlu(mem->size);
         mem->own_dev_data = true;
       }
-      mem->mem_op.MemcpyH2D(mem->dev_ptr, mem->host_ptr, mem->size, 1);
+      mem->mem_op.MemcpyH2D(mem->dev_ptr, mem->host_ptr, mem->size);
       mem->head = GST_SYNCHEAD_SYNCED;
       break;
     case GST_SYNCHEAD_AT_MLU:
@@ -199,7 +199,6 @@ cn_syncedmem_set_device_context(GstSyncedMemory_t mem, int dev_id, int ddr_chn)
   }
 
   mem->ctx.SetDeviceId(dev_id);
-  mem->ctx.SetChannelId(ddr_chn);
   return true;
 }
 
@@ -207,12 +206,6 @@ int
 cn_syncedmem_get_dev_id(GstSyncedMemory_t mem)
 {
   return mem->ctx.DeviceId();
-}
-
-int
-cn_syncedmem_get_ddr_channel(GstSyncedMemory_t mem)
-{
-  return mem->ctx.ChannelId();
 }
 
 void*

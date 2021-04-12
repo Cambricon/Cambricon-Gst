@@ -17,46 +17,47 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  *************************************************************************/
-#include <glog/logging.h>
+
+#include "easyinfer/mlu_memory_op.h"
 
 #include <cstring>
 #include <memory>
 #include <string>
 
-#include "easyinfer/mlu_memory_op.h"
+#include "cxxutil/log.h"
 #include "easyinfer/model_loader.h"
 #include "model_loader_internal.h"
 
 namespace edk {
 
-#define CHECK_MODEL_LOADER                         \
-  if (!ploader_) {                                 \
-    throw MluMemoryOpError("ModelLoader Not Set"); \
+#define CHECK_MODEL_LOADER                                          \
+  if (!model_) {                                                  \
+    THROW_EXCEPTION(Exception::UNAVAILABLE, "ModelLoader Not Set"); \
   }
 
-#define CHECK_CNRT_RET(err_code, str)                                                        \
-  if (CNRT_RET_SUCCESS != err_code) {                                                        \
-    throw MluMemoryOpError(std::string(str) + " error code: " + std::to_string(error_code)); \
+#define CHECK_CNRT_RET(err_code, str)                                                                           \
+  if (CNRT_RET_SUCCESS != err_code) {                                                                           \
+    THROW_EXCEPTION(Exception::MEMORY, std::string(str) + " cnrt error code: " + std::to_string(error_code)); \
   }
 
 #define ONLY_SUPPORT_FLOAT32_ON_CPU                        \
   do {                                                     \
-    int num = ploader_->InputNum();                        \
+    int num = model_->InputNum();                        \
     for (int i = 0; i < num; ++i) {                        \
-      DataLayout layout = ploader_->GetCpuInputLayout(i);  \
+      DataLayout layout = model_->GetCpuInputLayout(i);  \
       if (layout.dtype != DataType::FLOAT32) {             \
-        throw MluMemoryOpError(                            \
-            "Only support cpu"                             \
-            " layout with data type FLOAT32");             \
+        THROW_EXCEPTION(Exception::INVALID_ARG,            \
+                        "Only support cpu"                 \
+                        " layout with data type FLOAT32"); \
       }                                                    \
     }                                                      \
-    num = ploader_->OutputNum();                           \
+    num = model_->OutputNum();                           \
     for (int i = 0; i < num; ++i) {                        \
-      DataLayout layout = ploader_->GetCpuOutputLayout(i); \
+      DataLayout layout = model_->GetCpuOutputLayout(i); \
       if (layout.dtype != DataType::FLOAT32) {             \
-        throw MluMemoryOpError(                            \
-            "Only support cpu"                             \
-            " layout with data type FLOAT32");             \
+        THROW_EXCEPTION(Exception::INVALID_ARG,            \
+                        "Only support cpu"                 \
+                        " layout with data type FLOAT32"); \
       }                                                    \
     }                                                      \
   } while (0)
@@ -77,33 +78,32 @@ static size_t TypeSize(const DataType &type) {
     case DataType::INT32:
       return sizeof(int32_t);
     default:
-      throw MluMemoryOpError("Unsupported data type");
+      THROW_EXCEPTION(Exception::UNSUPPORTED, "Unsupported data type");
   }
 }
 
 static void TransLayout(const DataLayout &src_layout, const DataLayout &dst_layout, void *src_data, void *dst_data,
-                        const Shape &shape) {
+                        const ShapeEx &shape) {
   if (src_layout.order != DimOrder::NHWC && src_layout.order != DimOrder::NCHW) {
-    throw MluMemoryOpError("TransLayout: Unsupport data order(src).");
+    THROW_EXCEPTION(Exception::INVALID_ARG, "TransLayout: Unsupport data order(src).");
   }
   if (dst_layout.order != DimOrder::NHWC && dst_layout.order != DimOrder::NCHW) {
-    throw MluMemoryOpError("TransLayout: Unsupport data order(dst).");
+    THROW_EXCEPTION(Exception::INVALID_ARG, "TransLayout: Unsupport data order(dst).");
   }
 
   char bits = 0;
   if (src_layout.dtype != dst_layout.dtype) bits |= 1 << 0;
   if (src_layout.order != dst_layout.order) bits |= 1 << 1;
   cnrtRet_t error_code = CNRT_RET_SUCCESS;
-  int size = shape.DataCount();
-  int dim_values[4] = {static_cast<int>(shape.n), static_cast<int>(shape.h), static_cast<int>(shape.w),
-                       static_cast<int>(shape.c)};
+  int size = shape.BatchDataCount();
+  int dim_values[4] = {shape.N(), shape.H(), shape.W(), shape.C()};
   int dim_order[4];
   if (dst_layout.order == DimOrder::NHWC) {
     dim_order[0] = 0, dim_order[1] = 2, dim_order[2] = 3, dim_order[3] = 1;
   } else if (dst_layout.order == DimOrder::NCHW) {
     dim_order[0] = 0, dim_order[1] = 3, dim_order[2] = 1, dim_order[3] = 2;
   } else {
-    throw MluMemoryOpError("TransLayout: Unsupport data order(dst).");
+    THROW_EXCEPTION(Exception::INVALID_ARG, "TransLayout: Unsupport data order(dst).");
   }
   switch (bits) {
     case 1 << 0:
@@ -127,61 +127,60 @@ static void TransLayout(const DataLayout &src_layout, const DataLayout &dst_layo
   }
 }
 
-MluMemoryOp::MluMemoryOp() : ploader_(nullptr) {}
+MluMemoryOp::MluMemoryOp() : model_(nullptr) {}
 
-void MluMemoryOp::SetLoader(std::shared_ptr<ModelLoader> ploader) { ploader_ = ploader; }
+void MluMemoryOp::SetModel(std::shared_ptr<ModelLoader> model) { model_ = model; }
 
-std::shared_ptr<ModelLoader> MluMemoryOp::Loader() const { return ploader_; }
+std::shared_ptr<ModelLoader> MluMemoryOp::Model() const { return model_; }
 
-void **MluMemoryOp::AllocCpuInput(uint32_t batch_size) const {
+void **MluMemoryOp::AllocCpuInput() const {
   CHECK_MODEL_LOADER;
   ONLY_SUPPORT_FLOAT32_ON_CPU;
-  auto &shapes = ploader_->InputShapes();
-  uint32_t num = ploader_->InputNum();
+  uint32_t num = model_->InputNum();
 
-  VLOG(4) << "Alloc memory on CPU for model input";
+  LOGT(MEMORY) << "Alloc memory on CPU for model input";
 
   void **ret = new void *[num];
   for (uint32_t i = 0; i < num; ++i) {
-    uint64_t data_size = shapes[i].DataCount() * batch_size;
-    VLOG(4) << "Alloc CPU input memory (" << i << ") on CPU in " << data_size << " bytes";
+    auto &shape = model_->InputShape(i);
+    uint64_t data_size = shape.BatchDataCount();
+    LOGT(MEMORY) << "Alloc CPU input memory (" << i << ") on CPU in " << data_size << " bytes";
     ret[i] = reinterpret_cast<void *>(new float[data_size]);
   }
   return ret;
 }
 
-void **MluMemoryOp::AllocCpuOutput(uint32_t batch_size) const {
+void **MluMemoryOp::AllocCpuOutput() const {
   CHECK_MODEL_LOADER;
   ONLY_SUPPORT_FLOAT32_ON_CPU;
-  auto &shapes = ploader_->OutputShapes();
-  uint32_t num = shapes.size();
+  uint32_t num = model_->OutputNum();
 
-  VLOG(4) << "Alloc memory on CPU for model output";
+  LOGT(MEMORY) << "Alloc memory on CPU for model output";
 
   void **ret = new void *[num];
   for (uint32_t i = 0; i < num; ++i) {
-    uint64_t data_size = shapes[i].DataCount() * batch_size;
-    VLOG(4) << "Alloc output memory (" << i << ")"
-            << "on CPU in " << data_size;
+    auto &shape = model_->OutputShape(i);
+    uint64_t data_size = shape.BatchDataCount();
+    LOGT(MEMORY) << "Alloc output memory (" << i << ") on CPU in " << data_size << " bytes";
     ret[i] = reinterpret_cast<void *>(new float[data_size]);
   }
   return ret;
 }
 
-void **MluMemoryOp::AllocMluInput(uint32_t batch_size) const {
+void **MluMemoryOp::AllocMluInput() const {
   CHECK_MODEL_LOADER;
   void **ret = nullptr;
   cnrtRet_t error_code;
-  uint32_t num = ploader_->InputNum();
-  ModelLoaderInternalInterface interface(ploader_.get());
+  uint32_t num = model_->InputNum();
+  ModelLoaderInternalInterface interface(model_.get());
 
-  VLOG(4) << "Alloc memory on MLU for model input";
+  LOGT(MEMORY) << "Alloc memory on MLU for model input";
 
   ret = new void *[num];
   for (uint32_t i = 0; i < num; ++i) {
     void *t = nullptr;
     int64_t size = interface.InputDataSize(i);
-    VLOG(4) << "Alloc input memory (" << i << ") on MLU in " << size << " bytes";
+    LOGT(MEMORY) << "Alloc input memory (" << i << ") on MLU in " << size << " bytes";
     error_code = cnrtMalloc(&t, size);
     CHECK_CNRT_RET(error_code, "Mlu malloc failed.");
     ret[i] = t;
@@ -189,20 +188,20 @@ void **MluMemoryOp::AllocMluInput(uint32_t batch_size) const {
   return ret;
 }
 
-void **MluMemoryOp::AllocMluOutput(uint32_t batch_size) const {
+void **MluMemoryOp::AllocMluOutput() const {
   CHECK_MODEL_LOADER;
   void **ret = nullptr;
   cnrtRet_t error_code;
-  uint32_t num = ploader_->OutputNum();
-  ModelLoaderInternalInterface interface(ploader_.get());
+  uint32_t num = model_->OutputNum();
+  ModelLoaderInternalInterface interface(model_.get());
 
-  VLOG(4) << "Alloc memory on MLU for model output";
+  LOGT(MEMORY) << "Alloc memory on MLU for model output";
 
   ret = new void *[num];
   for (uint32_t i = 0; i < num; ++i) {
     void *t = nullptr;
     int64_t size = interface.OutputDataSize(i);
-    VLOG(4) << "Alloc output memory (" << i << ") on MLU in " << size << " bytes";
+    LOGT(MEMORY) << "Alloc output memory (" << i << ") on MLU in " << size << " bytes";
     error_code = cnrtMalloc(&t, size);
     CHECK_CNRT_RET(error_code, "Mlu malloc failed.");
     ret[i] = t;
@@ -210,19 +209,19 @@ void **MluMemoryOp::AllocMluOutput(uint32_t batch_size) const {
   return ret;
 }
 
-void *MluMemoryOp::AllocMlu(size_t nBytes, uint32_t batch_size) const {
+void *MluMemoryOp::AllocMlu(size_t nBytes) const {
   void *ret = nullptr;
   cnrtRet_t error_code;
-  VLOG(4) << "Alloc memory on MLU in " << nBytes * batch_size << " bytes";
-  error_code = cnrtMalloc(&ret, nBytes * batch_size);
+  LOGT(MEMORY) << "Alloc memory on MLU in " << nBytes << " bytes";
+  error_code = cnrtMalloc(&ret, nBytes);
   CHECK_CNRT_RET(error_code, "Mlu malloc failed.");
   return ret;
 }
 
 void MluMemoryOp::FreeCpuInput(void **ptr) const {
   CHECK_MODEL_LOADER;
-  VLOG(4) << "Free input memory on CPU";
-  uint32_t num = ploader_->InputNum();
+  LOGT(MEMORY) << "Free input memory on CPU";
+  uint32_t num = model_->InputNum();
   for (uint32_t i = 0; i < num; ++i) {
     delete[] reinterpret_cast<float *>(ptr[i]);
   }
@@ -231,102 +230,119 @@ void MluMemoryOp::FreeCpuInput(void **ptr) const {
 
 void MluMemoryOp::FreeCpuOutput(void **ptr) const {
   CHECK_MODEL_LOADER;
-  VLOG(4) << "Free output memory on CPU";
-  uint32_t num = ploader_->OutputNum();
+  LOGT(MEMORY) << "Free output memory on CPU";
+  uint32_t num = model_->OutputNum();
   for (uint32_t i = 0; i < num; ++i) {
     delete[] reinterpret_cast<float *>(ptr[i]);
   }
   delete[] ptr;
 }
 
-void MluMemoryOp::FreeArrayMlu(void **ptr, uint32_t mem_num) const {
-  VLOG(4) << "Free memory array on MLU";
+void MluMemoryOp::FreeMluInput(void **ptr) const {
+  CHECK_MODEL_LOADER;
+  LOGT(MEMORY) << "Free input memory on MLU";
+  uint32_t mem_num = model_->InputNum();
   for (uint32_t i = 0; i < mem_num; ++i) {
-    cnrtFree(ptr[i]);
+    cnrtRet_t ret = cnrtFree(ptr[i]);
+    if (ret != CNRT_RET_SUCCESS) {
+      LOGE(MEMORY) << "free MLU input memory failed";
+    }
+  }
+  delete[] ptr;
+}
+
+void MluMemoryOp::FreeMluOutput(void **ptr) const {
+  CHECK_MODEL_LOADER;
+  LOGT(MEMORY) << "Free input memory on MLU";
+  uint32_t mem_num = model_->OutputNum();
+  for (uint32_t i = 0; i < mem_num; ++i) {
+    cnrtRet_t ret = cnrtFree(ptr[i]);
+    if (ret != CNRT_RET_SUCCESS) {
+      LOGE(MEMORY) << "free MLU output memory failed";
+    }
   }
   delete[] ptr;
 }
 
 void MluMemoryOp::FreeMlu(void *ptr) const {
-  VLOG(4) << "Free memory on MLU";
-  cnrtFree(ptr);
+  LOGT(MEMORY) << "Free memory on MLU";
+  cnrtRet_t ret = cnrtFree(ptr);
+  if (ret != CNRT_RET_SUCCESS) {
+    LOGE(MEMORY) << "free MLU memory failed";
+  }
 }
 
-void MluMemoryOp::MemcpyInputH2D(void **mlu_dst, void **cpu_src, uint32_t batch_size) const {
+void MluMemoryOp::MemcpyInputH2D(void **mlu_dst, void **cpu_src) const {
   CHECK_MODEL_LOADER;
   ONLY_SUPPORT_FLOAT32_ON_CPU;
-  ModelLoaderInternalInterface interface(ploader_.get());
+  ModelLoaderInternalInterface interface(model_.get());
   cnrtRet_t error_code;
-  VLOG(5) << "copy input memory from host to device";
+  LOGA(MEMORY) << "copy input memory from host to device";
 
-  int64_t num = ploader_->InputNum();
+  int64_t num = model_->InputNum();
   for (int i = 0; i < num; ++i) {
     void *src = cpu_src[i];
     void *dst = mlu_dst[i];
-    size_t size = interface.InputDataSize(i) * batch_size;
+    size_t size = interface.InputDataSize(i);
 
     // format data
-    DataLayout cpu_layout = ploader_->GetCpuInputLayout(i);
+    DataLayout cpu_layout = model_->GetCpuInputLayout(i);
     DataLayout mlu_layout = interface.GetMluInputLayout(i);
-    Shape sp = ploader_->InputShapes()[i];
+    const ShapeEx& sp = model_->InputShape(i);
     void *temp_data = malloc(size);
-    if (nullptr == temp_data) {
-      throw MluMemoryOpError("Malloc temp data on cpu failed.");
-    }
+    CHECK(MEMORY, temp_data) << "Malloc temp data on cpu failed.";
     TransLayout(cpu_layout, mlu_layout, src, temp_data, sp);
-    VLOG(5) << "MemcpyInputH2D in size " << size << ", dst: " << dst << ", src: " << src << ", tmp: " << temp_data;
+    LOGA(MEMORY) << "MemcpyInputH2D in size " << size << ", dst: " << dst << ", src: " << src << ", tmp: " << temp_data;
     error_code = cnrtMemcpy(dst, temp_data, size, CNRT_MEM_TRANS_DIR_HOST2DEV);
     CHECK_CNRT_RET(error_code, "Memcpy host to device failed.");
     free(temp_data);
   }
 }
 
-void MluMemoryOp::MemcpyOutputD2H(void **cpu_dst, void **mlu_src, uint32_t batch_size) const {
+void MluMemoryOp::MemcpyOutputD2H(void **cpu_dst, void **mlu_src) const {
   CHECK_MODEL_LOADER;
   ONLY_SUPPORT_FLOAT32_ON_CPU;
-  ModelLoaderInternalInterface interface(ploader_.get());
-  VLOG(5) << "copy output memory from device to host";
+  ModelLoaderInternalInterface interface(model_.get());
+  LOGA(MEMORY) << "copy output memory from device to host";
 
-  int64_t num = ploader_->OutputNum();
+  int64_t num = model_->OutputNum();
   for (int i = 0; i < num; ++i) {
     void *src = mlu_src[i];
     void *dst = cpu_dst[i];
-    size_t size = interface.OutputDataSize(i) * batch_size;
+    size_t size = interface.OutputDataSize(i);
     void *temp_data = malloc(size);
-    if (nullptr == temp_data) {
-      throw MluMemoryOpError("Malloc temp data on cpu failed.");
-    }
-    VLOG(5) << "MemcpyOutputD2H in size " << size << ", dst: " << dst << ", src: " << src << ", tmp: " << temp_data;
+    CHECK(MEMORY, temp_data) << "Malloc temp data on cpu failed.";
+    LOGA(MEMORY) << "MemcpyOutputD2H in size " << size << ", dst: " << dst << ", src: " << src
+                 << ", tmp: " << temp_data;
     auto error_code = cnrtMemcpy(temp_data, src, size, CNRT_MEM_TRANS_DIR_DEV2HOST);
     CHECK_CNRT_RET(error_code, "Memcpy device to host failed.");
     // format data
-    DataLayout cpu_layout = ploader_->GetCpuOutputLayout(i);
+    DataLayout cpu_layout = model_->GetCpuOutputLayout(i);
     DataLayout mlu_layout = interface.GetMluOutputLayout(i);
-    Shape sp = ploader_->OutputShapes()[i];
+    const ShapeEx& sp = model_->OutputShape(i);
     TransLayout(mlu_layout, cpu_layout, temp_data, dst, sp);
     free(temp_data);
   }
 }
 
-void MluMemoryOp::MemcpyH2D(void *mlu_dst, void *cpu_src, size_t nBytes, uint32_t batch_size) const {
+void MluMemoryOp::MemcpyH2D(void *mlu_dst, void *cpu_src, size_t nBytes) const {
   cnrtRet_t error_code;
-  VLOG(5) << "copy memory from host to device in size " << nBytes * batch_size << ", dst: " << mlu_dst
-          << ", src: " << cpu_src;
-  error_code = cnrtMemcpy(mlu_dst, cpu_src, nBytes * batch_size, CNRT_MEM_TRANS_DIR_HOST2DEV);
+  LOGA(MEMORY) << "copy memory from host to device in size " << nBytes << ", dst: " << mlu_dst << ", src: " << cpu_src;
+  error_code = cnrtMemcpy(mlu_dst, cpu_src, nBytes, CNRT_MEM_TRANS_DIR_HOST2DEV);
   CHECK_CNRT_RET(error_code, "Memcpy host to device failed.");
 }
 
-void MluMemoryOp::MemcpyD2H(void *cpu_dst, void *mlu_src, size_t nBytes, uint32_t batch_size) const {
+void MluMemoryOp::MemcpyD2H(void *cpu_dst, void *mlu_src, size_t nBytes) const {
   cnrtRet_t error_code;
-  VLOG(5) << "copy memory from device to host in size " << nBytes * batch_size << ", dst: " << cpu_dst
-          << ", src: " << mlu_src;
-  error_code = cnrtMemcpy(cpu_dst, mlu_src, nBytes * batch_size, CNRT_MEM_TRANS_DIR_DEV2HOST);
+  LOGA(MEMORY) << "copy memory from device to host in size " << nBytes << ", dst: " << cpu_dst << ", src: " << mlu_src;
+  error_code = cnrtMemcpy(cpu_dst, mlu_src, nBytes, CNRT_MEM_TRANS_DIR_DEV2HOST);
   CHECK_CNRT_RET(error_code, "Memcpy host to device failed.");
 }
 
 void MluMemoryOp::MemcpyD2D(void *mlu_dst, void *mlu_src, size_t nBytes) const {
   cnrtRet_t error_code;
-  VLOG(5) << "copy memory from device to device in size " << nBytes << ", dst: " << mlu_dst << ", src: " << mlu_src;
+  LOGA(MEMORY) << "copy memory from device to device in size " << nBytes << ", dst: " << mlu_dst
+               << ", src: " << mlu_src;
   error_code = cnrtMemcpy(mlu_dst, mlu_src, nBytes, CNRT_MEM_TRANS_DIR_DEV2DEV);
   CHECK_CNRT_RET(error_code, "Memcpy device to device failed.");
 }

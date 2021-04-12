@@ -251,9 +251,6 @@ resize_convert(GstCnconvert* self, GstMluFrame_t frame)
     priv->rcop = new edk::MluResizeConvertOp;
     edk::MluResizeConvertOp::Attr attr;
     edk::MluContext ctx;
-    attr.src_w = priv->sink_info.width;
-    attr.src_h = priv->sink_info.height;
-    attr.src_stride = frame->stride[0];
     attr.dst_w = priv->src_info.width;
     attr.dst_h = priv->src_info.height;
     attr.batch_size = 1;
@@ -261,8 +258,8 @@ resize_convert(GstCnconvert* self, GstMluFrame_t frame)
     attr.color_mode = color_mode_cast(priv->sink_info.finfo->format, priv->src_info.finfo->format);
     if (attr.color_mode == edk::MluResizeConvertOp::ColorMode::RGBA2RGBA)
       return FALSE;
-    GST_INFO_OBJECT(self, "src: %d:%d, dst: %d:%d, color mode:%d, core version: %d\n", attr.src_w, attr.src_h,
-                    attr.dst_w, attr.dst_h, static_cast<int>(attr.color_mode), static_cast<int>(attr.core_version));
+    GST_INFO_OBJECT(self, "dst: %d:%d, color mode:%d, core version: %d\n", attr.dst_w, attr.dst_h,
+                    static_cast<int>(attr.color_mode), static_cast<int>(attr.core_version));
     priv->rcop->Init(attr);
   }
 
@@ -283,8 +280,8 @@ resize_convert(GstCnconvert* self, GstMluFrame_t frame)
   edk::MluResizeConvertOp::InputData data;
   data.planes[0] = cn_syncedmem_get_mutable_dev_data(frame->data[0]);
   data.planes[1] = cn_syncedmem_get_mutable_dev_data(frame->data[1]);
-  data.src_h = priv->src_info.height;
-  data.src_w = priv->src_info.width;
+  data.src_h = priv->sink_info.height;
+  data.src_w = priv->sink_info.width;
   data.src_stride = frame->stride[0];
   priv->rcop->BatchingUp(data);
   if (!priv->rcop->SyncOneOutput(cn_syncedmem_get_mutable_dev_data(priv->mlu_dst_mem))) {
@@ -353,18 +350,17 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
 
   // copy data from device to host
   if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV21) {
-    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height, 1);
+    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
     mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height, cn_syncedmem_get_mutable_dev_data(frame->data[1]),
-                     (frame->stride[1] * frame->height) >> 1, 1);
+                     (frame->stride[1] * frame->height) >> 1);
   } else if (fmt == GST_VIDEO_FORMAT_I420) {
-    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height, 1);
+    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
     mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height, cn_syncedmem_get_mutable_dev_data(frame->data[1]),
-                     (frame->stride[1] * frame->height) >> 1, 1);
+                     (frame->stride[1] * frame->height) >> 1);
     mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height + (frame->stride[1] * frame->height >> 1), cn_syncedmem_get_mutable_dev_data(frame->data[2]),
-                     (frame->stride[2] * frame->height) >> 1, 1);
+                     (frame->stride[2] * frame->height) >> 1);
   } else {
-    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height * 4,
-                     1);
+    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height * 4);
   }
 
   GST_DEBUG_OBJECT(self, "stride = %d, width = %d\n", frame->stride[0], frame->width);

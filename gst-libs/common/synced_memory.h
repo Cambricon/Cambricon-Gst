@@ -136,14 +136,6 @@ extern "C"
   int cn_syncedmem_get_dev_id(GstSyncedMemory_t mem);
 
   /**
- * Gets the channel id of the MLU DDR.
- *
- * @param mem A GstSyncedMemory.
- * @return the DDR channel of the MLU memory allocated on.
- */
-  int cn_syncedmem_get_ddr_channel(GstSyncedMemory_t mem);
-
-  /**
  * Gets the mutable host data.
  *
  * @param mem A GstSyncedMemory.

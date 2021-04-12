@@ -1,11 +1,13 @@
 #include "match.h"
 
+#include <algorithm>
 #include <cmath>
 #include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
 #include <string>
+#include <vector>
 
 #define AVERAGE_DISTANCE false
 

@@ -23,12 +23,88 @@
 
 #include <cnrt.h>
 
+#include <map>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "device/mlu_context.h"
+
 namespace edk {
 
-struct MluTaskQueue {
-  cnrtQueue_t queue = nullptr;
-  ~MluTaskQueue();
+#define CALL_CNRT_FUNC(func, msg)                                                                            \
+  do {                                                                                                       \
+    cnrtRet_t ret = (func);                                                                                  \
+    if (CNRT_RET_SUCCESS != ret) {                                                                           \
+      THROW_EXCEPTION(Exception::INTERNAL, std::string(msg) + ", cnrt error code : " + std::to_string(ret)); \
+    }                                                                                                        \
+  } while (0)
+
+class TimeMark {
+ public:
+  TimeMark() { CALL_CNRT_FUNC(cnrtCreateNotifier(&base_), "Create notifier failed"); }
+
+  TimeMark(TimeMark&& other) : base_(other.base_) { other.base_ = nullptr; }
+
+  TimeMark& operator=(TimeMark&& other) {
+    base_ = other.base_;
+    other.base_ = nullptr;
+    return *this;
+  }
+
+  ~TimeMark() {
+    if (nullptr != base_) cnrtDestroyNotifier(&base_);
+  }
+
+  void Mark(cnrtQueue_t queue) { CALL_CNRT_FUNC(cnrtPlaceNotifier(base_, queue), "cnrtPlaceNotifier failed"); }
+
+  void Mark(MluTaskQueue_t queue);
+
+  cnrtNotifier_t GetNotifier() noexcept { return base_; }
+
+  // get hardware time in ms
+  static float Count(const TimeMark& start, const TimeMark& end) {
+    float dura;
+    CALL_CNRT_FUNC(cnrtNotifierDuration(start.base_, end.base_, &dura), "Calculate elapsed time failed.");
+    dura /= 1000;
+    return dura;
+  }
+
+ private:
+  TimeMark(const TimeMark&) = delete;
+  TimeMark& operator=(const TimeMark&) = delete;
+  cnrtNotifier_t base_{nullptr};
 };
+
+struct MluTaskQueuePrivate {
+  ~MluTaskQueuePrivate();
+  cnrtQueue_t queue = nullptr;
+  std::vector<TimeMark> marks;
+  std::vector<bool> marks_valid;
+};
+
+inline void MluTaskQueue::_PrivDelete::operator()(MluTaskQueuePrivate* p) { delete p; }
+
+class MluTaskQueueProxy {
+ public:
+  static cnrtQueue_t GetCnrtQueue(MluTaskQueue_t q) noexcept { return q->priv_->queue; }
+
+  static void SetCnrtQueue(MluTaskQueue_t q, cnrtQueue_t cnrt_q) {
+    if (q->priv_->queue) {
+      q->priv_.reset(new MluTaskQueuePrivate);
+    }
+    q->priv_->queue = cnrt_q;
+  }
+
+  static MluTaskQueue_t Wrap(cnrtQueue_t cnrt_q) {
+    auto q = std::shared_ptr<MluTaskQueue>(new MluTaskQueue);
+    q->priv_->queue = cnrt_q;
+    return q;
+  }
+};
+
+inline void TimeMark::Mark(MluTaskQueue_t queue) { Mark(MluTaskQueueProxy::GetCnrtQueue(std::move(queue))); }
 
 }  // namespace edk
 

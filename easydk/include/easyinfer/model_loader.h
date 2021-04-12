@@ -27,14 +27,14 @@
 #ifndef EASYINFER_MODEL_LOADER_H_
 #define EASYINFER_MODEL_LOADER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
+#include "cxxutil/edk_attribute.h"
 #include "cxxutil/exception.h"
 #include "easyinfer/shape.h"
 
 namespace edk {
-
-TOOLKIT_REGISTER_EXCEPTION(ModelLoader);
 
 /**
  * @brief Enumeration to specify data type of model input and output
@@ -50,8 +50,8 @@ enum class DimOrder { NCHW, NHWC, HWCN, TNC, NTC };
  * @brief Describe data layout on MLU or CPU
  */
 struct DataLayout {
-  DataType dtype;  ///< @see DataType
-  DimOrder order;  ///< @see DimOrder
+  DataType dtype;  ///< @see edk::DataType
+  DimOrder order;  ///< @see edk::DimOrder
 };
 
 class ModelLoaderPrivate;
@@ -67,8 +67,8 @@ class ModelLoader {
    * @brief Constructor 1. Construct a new Model Loader object
    *
    * @note Delegate to constructor 2 for construct
-   * @param model_path[in] Inference offline model path
-   * @param function_name[in] Name of function in offline model
+   * @param model_path Inference offline model path
+   * @param function_name Name of function in offline model
    */
   ModelLoader(const std::string& model_path, const std::string& function_name);
 
@@ -76,16 +76,16 @@ class ModelLoader {
    * @brief Constructor 2. Construct a new Model Loader object
    *
    * @note Delegate to constructor 3 for construct
-   * @param model_path[in] Model path
-   * @param function_name[in] Function name
+   * @param model_path Model path
+   * @param function_name Function name
    */
   ModelLoader(const char* model_path, const char* function_name);
 
   /**
    * @brief Constructor 3. Construct a new Model Loader object
    *
-   * @param mem_ptr[in] Offline model binary stored in memory
-   * @param function_name[in] Function name
+   * @param mem_ptr Offline model binary stored in memory
+   * @param function_name Function name
    */
   ModelLoader(void* mem_ptr, const char* function_name);
 
@@ -97,7 +97,7 @@ class ModelLoader {
   /**
    * @brief Query whether model outputs RGB0 image together with inference result
    *
-   * @param output_index[out] RGB0 output index
+   * @param output_index RGB0 output index
    * @return Return true if have RGB0 output, and RGB0 index assigned to output_index
    */
   bool WithRGB0Output(int* output_index = nullptr) const;
@@ -110,32 +110,25 @@ class ModelLoader {
   bool WithYUVInput() const;
 
   /**
-   * @brief Init model input data and output data layout on MLU100
-   * @attention Implement as an empty function on this version
-   * @deprecated
-   */
-  void InitLayout();
-
-  /**
    * @brief Set specified input data layout on CPU
    *
-   * @param layout[in] Data layout
-   * @param data_index[in] Data index
+   * @param layout Data layout
+   * @param data_index Data index
    */
   void SetCpuInputLayout(DataLayout layout, int data_index);
 
   /**
    * @brief Set specified output data layout on CPU
    *
-   * @param layout[in] Data layout
-   * @param data_index[in] Data index
+   * @param layout Data layout
+   * @param data_index Data index
    */
   void SetCpuOutputLayout(DataLayout layout, int data_index);
 
   /**
    * @brief Get specified input data layout on CPU
    *
-   * @param data_index[in] Data index
+   * @param data_index Data index
    * @return Data layout
    */
   DataLayout GetCpuInputLayout(int data_index) const;
@@ -143,7 +136,7 @@ class ModelLoader {
   /**
    * @brief Get specified output data layout on CPU
    *
-   * @param data_index[in] Data index
+   * @param data_index Data index
    * @return Data layout
    */
   DataLayout GetCpuOutputLayout(int data_index) const;
@@ -173,16 +166,34 @@ class ModelLoader {
   /**
    * @brief Get model input data shapes
    *
+   * @deprecated use ModelLoader::InputShape(uint32_t) instead
    * @return Model input data shapes
    */
-  const std::vector<Shape>& InputShapes() const;
+  attribute_deprecated const std::vector<Shape>& InputShapes() const;
 
   /**
    * @brief Get model output data shapes
    *
+   * @deprecated use ModelLoader::OutputShape(uint32_t) instead
    * @return Model output data shapes
    */
-  const std::vector<Shape>& OutputShapes() const;
+  attribute_deprecated const std::vector<Shape>& OutputShapes() const;
+
+  /**
+   * @brief Get model input data shape
+   *
+   * @param index input index
+   * @return Model input data shape
+   */
+  const ShapeEx& InputShape(uint32_t index) const;
+
+  /**
+   * @brief Get model output data shape
+   *
+   * @param index output index
+   * @return Model output data shape
+   */
+  const ShapeEx& OutputShape(uint32_t index) const;
 
   /**
    * @brief Get model parallelism
@@ -195,7 +206,7 @@ class ModelLoader {
   /**
    * @brief Get the input data batch align size
    *
-   * @param data_index[in] Data index
+   * @param data_index Data index
    * @return input data batch align size
    */
   int64_t GetInputDataBatchAlignSize(int data_index) const;
@@ -203,15 +214,13 @@ class ModelLoader {
   /**
    * @brief Get the output data batch align size
    *
-   * @param data_index[in] Data index
+   * @param data_index Data index
    * @return output data batch align size
    */
   int64_t GetOutputDataBatchAlignSize(int data_index) const;
 
  private:
-  void ReleaseModel();
-
-  ModelLoaderPrivate* d_ptr_ = nullptr;
+  std::unique_ptr<ModelLoaderPrivate> d_ptr_;
 
   ModelLoader(const ModelLoader&) = delete;
   ModelLoader& operator=(const ModelLoader&) = delete;
