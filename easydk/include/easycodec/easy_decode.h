@@ -27,9 +27,10 @@
 #ifndef EASYCODEC_EASY_DECODE_H_
 #define EASYCODEC_EASY_DECODE_H_
 
-#include <chrono>
 #include <functional>
+#include <memory>
 
+#include "cxxutil/edk_attribute.h"
 #include "cxxutil/exception.h"
 #include "easycodec/vformat.h"
 
@@ -37,7 +38,7 @@ namespace edk {
 
 /**
  * @brief Decode packet callback function type
- * @param CnFrame[in] Frame containing decoded frame information
+ * @param CnFrame Frame containing decoded frame information
  */
 using DecodeFrameCallback = std::function<void(const CnFrame&)>;
 
@@ -46,13 +47,14 @@ using DecodeEOSCallback = std::function<void()>;
 
 class DecodeHandler;
 
-TOOLKIT_REGISTER_EXCEPTION(EasyDecode);
-
 /**
  * @brief Easy decode class, provide a fast and easy API to decode on MLU platform
  */
 class EasyDecode {
  public:
+  /**
+   * @brief params for creating EasyDecode
+   */
   struct Attr {
     /// The frame resolution that this decoder can handle.
     Geometry frame_geometry;
@@ -65,9 +67,6 @@ class EasyDecode {
 
     /// Color space standard
     ColorStd color_std = ColorStd::ITU_BT_709;
-
-    /// Specify library in which manage input and output buffer
-    BufferStrategy buf_strategy = BufferStrategy::CNCODEC;
 
     /// The input buffer count
     uint32_t input_buffer_num = 2;
@@ -91,8 +90,8 @@ class EasyDecode {
     int dev_id = 0;
 
     /// Set align value (2^n = 1,4,8...), MLU270: 1 -- MLU220 scalar: 128
+    /// @note only work on video decode, JPEG stride align is fixed to 64
     int stride_align = 1;
-
   };  // struct Attr
 
   /**
@@ -107,11 +106,11 @@ class EasyDecode {
 
   /**
    * @brief Create decoder by attr. Throw a Exception while error encountered.
-   * @param attr[in] Decoder attribute description
+   * @param attr Decoder attribute description
    * @attention status is RUNNING after object be constructed.
    * @return Pointer to new decoder instance
    */
-  static EasyDecode* Create(const Attr& attr) noexcept(false);
+  static std::unique_ptr<EasyDecode> New(const Attr& attr) noexcept(false);
 
   /**
    * @brief Get the decoder instance attribute
@@ -125,29 +124,68 @@ class EasyDecode {
    */
   Status GetStatus() const;
 
-  bool Resume();
+  /**
+   * @brief Pause the decode process
+   */
   bool Pause();
 
+  /**
+   * @brief Resume the decode process
+   */
+  bool Resume();
+
+  /**
+   * @brief Abort decoder instance at once
+   * @note aborted decoder instance cannot be used any more
+   */
   void AbortDecoder();
 
   /**
    * @brief Send data to decoder, block when STATUS is pause.
    *        An Exception is thrown when send data failed.
+   *
+   * @deprecated use `bool FeedData(const CnPacket&, bool)` and `bool FeedEos()` instead
+   * @param packet bytestream data
+   * @param eos indicate whether this packet is end-of-stream
+   * @param integral_frame indicate whether packet contain an integral frame
+   *
    * @return return false when STATUS is not UNINITIALIZED or STOP.
    */
-  bool SendData(const CnPacket& packet, bool eos = false, bool integral_frame = false) noexcept(false);
+  attribute_deprecated bool SendData(const CnPacket& packet, bool eos = false,
+                                     bool integral_frame = false) noexcept(false);
+
+  /**
+   * @brief Send data to decoder, block when STATUS is pause.
+   *        An Exception is thrown when send data failed.
+   *
+   * @param packet bytestream data
+   * @param integral_frame indicate whether packet contain an integral frame
+   *
+   * @retval true Feed data succeed
+   * @retval false otherwise
+   */
+  bool FeedData(const CnPacket& packet, bool integral_frame = true) noexcept(false);
+
+  /**
+   * @brief Send EOS to decoder, block when STATUS is pause.
+   *        An Exception is thrown when send EOS failed.
+   *
+   * @retval false if an EOS has been sent
+   * @retval true otherwise.
+   */
+  bool FeedEos() noexcept(false);
 
   /**
    * @brief Release decoder's buffer.
    * @note Release decoder buffer While buffer content will not be used, or decoder may be blocked.
-   * @param buf_id[in] Codec buffer id.
+   * @param buf_id Codec buffer id.
    */
   void ReleaseBuffer(uint64_t buf_id);
 
   /**
    * @brief copy frame from device to host.
-   * @param dst[in] copy destination
-   * @param frame[in] Frame you want to copy
+   * @param dst copy destination
+   * @param frame Frame you want to copy
    * @return when error occurs, return false.
    */
   bool CopyFrameD2H(void* dst, const CnFrame& frame);
@@ -168,7 +206,7 @@ class EasyDecode {
   friend class DecodeHandler;
 
  private:
-  EasyDecode();
+  explicit EasyDecode(const Attr& attr);
   EasyDecode(const EasyDecode&) = delete;
   EasyDecode& operator=(const EasyDecode&) = delete;
   EasyDecode(EasyDecode&&) = delete;

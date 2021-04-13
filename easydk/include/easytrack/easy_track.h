@@ -35,8 +35,6 @@
 
 namespace edk {
 
-TOOLKIT_REGISTER_EXCEPTION(EasyTrack);
-
 /**
  * @brief Struct of BoundingBox
  */
@@ -117,9 +115,9 @@ class EasyTrack {
   /**
    * @brief Update object status and do track
    *
-   * @param frame[in] Track frame
-   * @param detects[in] Detected objects
-   * @param tracks[out] Tracked objects
+   * @param frame Track frame
+   * @param detects Detected objects
+   * @param tracks Tracked objects
    */
   virtual void UpdateFrame(const TrackFrame &frame, const Objects &detects, Objects *tracks) noexcept(false) = 0;
 };  // class EasyTrack
@@ -147,20 +145,20 @@ class FeatureMatchTrack : public EasyTrack {
   /**
    * @brief Set params related to Tracking algorithm.
    *
-   * @param max_cosine_distancev[in] Threshold of cosine distance
-   * @param nn_budget[in] Tracker only saves the latest [nn_budget] samples of feature for each object
-   * @param max_iou_distance[in] Threshold of iou distance
-   * @param max_age[in] Object stay alive for [max_age] after disappeared
-   * @param n_init[in] After matched [n_init] times in a row, object is turned from TENTATIVE to CONFIRMED
+   * @param max_cosine_distance Threshold of cosine distance
+   * @param nn_budget Tracker only saves the latest [nn_budget] samples of feature for each object
+   * @param max_iou_distance Threshold of iou distance
+   * @param max_age Object stay alive for [max_age] after disappeared
+   * @param n_init After matched [n_init] times in a row, object is turned from TENTATIVE to CONFIRMED
    */
   void SetParams(float max_cosine_distance, int nn_budget, float max_iou_distance, int max_age, int n_init);
 
   /**
    * @brief Update object status and do tracking using cascade matching and IOU matching.
    *
-   * @param frame[in] Track frame
-   * @param detects[in] Detected objects
-   * @param tracks[out] Tracked objects
+   * @param frame Track frame
+   * @param detects Detected objects
+   * @param tracks Tracked objects
    */
   void UpdateFrame(const TrackFrame &frame, const Objects &detects, Objects *tracks) override;
 
@@ -196,21 +194,21 @@ class KcfTrack : public EasyTrack {
   /**
    * @brief Set params related to offline model.
    *
-   * @param model[in] ModelLoader
-   * @param dev_id[in] the id of device
-   * @param batch_size[in] Batch size
+   * @param model ModelLoader
+   * @param dev_id the id of device
+   * @param batch_size Batch size
    */
   void SetModel(std::shared_ptr<ModelLoader> model, int dev_id = 0, uint32_t batch_size = 1);
 
   /**
    * @brief Set params related to KcfTrack.
-   * @param max_iou_distance[in] Threshold of iou distance
+   * @param max_iou_distance Threshold of iou distance
    */
   void SetParams(float max_iou_distance);
 
   /**
    * @brief Update result of objects tracking after kcf and IOU matching.
-   * @see EasyTrack::UpdateFrame
+   * @see edk::EasyTrack::UpdateFrame
    */
   void UpdateFrame(const TrackFrame &frame, const Objects &detects, Objects *tracks) override;
 
@@ -220,9 +218,17 @@ class KcfTrack : public EasyTrack {
   float max_iou_distance_ = 0.7;
 };  // class KcfTrack
 
+/**
+ * @brief Insert DetectObject into the ostream
+ *
+ * @param os output stream to insert data to
+ * @param obj reference to an DetectObjec to insert
+ *
+ * @return reference to output stream
+ */
 inline std::ostream &operator<<(std::ostream &os, const DetectObject &obj) {
-  os << "[Object] label: " << obj.label << "  score: " << obj.score << '\t' << "bbox: " << obj.bbox.x << "  "
-     << obj.bbox.y << "  " << obj.bbox.width << "  " << obj.bbox.height << std::endl;
+  os << "[Object] label: " << obj.label << " score: " << obj.score << " track_id: " << obj.track_id << '\t'
+     << "bbox: " << obj.bbox.x << "  " << obj.bbox.y << "  " << obj.bbox.width << "  " << obj.bbox.height;
   return os;
 }
 

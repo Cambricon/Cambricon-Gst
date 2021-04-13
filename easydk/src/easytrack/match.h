@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "easytrack/easy_track.h"
@@ -34,7 +35,6 @@ class MatchAlgorithm {
   float IoU(const Rect &a, const Rect &b);
   HungarianAlgorithm hungarian_;
   static std::map<std::string, DistanceFunc> distance_algo_;
-
 };  // class MatchAlgorithm
 
 }  // namespace edk

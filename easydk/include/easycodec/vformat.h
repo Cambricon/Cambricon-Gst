@@ -29,7 +29,7 @@
 
 #include <cstdint>
 
-#define CN_MAXIMUM_PLANE 6
+#define CN_MAXIMUM_PLANE 3
 
 namespace edk {
 
@@ -46,7 +46,7 @@ struct Geometry {
  */
 enum class PixelFmt {
   NV12 = 0,  ///< NV12, YUV family
-  NV21,  ///< NV21, YUV family
+  NV21,      ///< NV21, YUV family
   I420,
   YV12,
   YUYV,
@@ -62,7 +62,7 @@ enum class PixelFmt {
   RGBA,
   AYUV,
   RGB565,
-  RAW,     ///< No format
+  RAW,  ///< No format
   TOTAL_COUNT
 };
 
@@ -71,7 +71,7 @@ enum class PixelFmt {
  * @note Type contains both video and image
  */
 enum class CodecType {
-  MPEG2,
+  MPEG2 = 0,
   MPEG4,  ///< MPEG4 video codec standard
   H264,   ///< H.264 video codec standard
   H265,   ///< H.265 video codec standard, aka HEVC
@@ -83,17 +83,12 @@ enum class CodecType {
 };
 
 enum class ColorStd {
-  ITU_BT_709 = 0,   /* ITU BT 709 color standard */
-  ITU_BT_601,       /* ITU BT.601 color standard */
-  ITU_BT_2020,      /* ITU BT 2020 color standard */
-  ITU_BT_601_ER,    /* ITU BT 601 color standard extend range */
-  ITU_BT_709_ER,    /* ITU BT 709 color standard extend range */
+  ITU_BT_709 = 0,  ///< ITU BT 709 color standard
+  ITU_BT_601,      ///< ITU BT.601 color standard
+  ITU_BT_2020,     ///< ITU BT 2020 color standard
+  ITU_BT_601_ER,   ///< ITU BT 601 color standard extend range
+  ITU_BT_709_ER,   ///< ITU BT 709 color standard extend range
   COLOR_STANDARD_INVALID,
-};
-
-enum class BufferStrategy {
-  CNCODEC,
-  EDK
 };
 
 /**
@@ -105,38 +100,37 @@ struct CnFrame {
    * Used to release buffer in EasyDecode::ReleaseBuffer
    * when frame memory from decoder will not be used. Useless in encoder.
    */
-  uint64_t buf_id;
+  uint64_t buf_id{0};
   /// Presentation time stamp
-  uint64_t pts;
+  uint64_t pts{0};
   /// Frame height in pixel
-  uint32_t height;
+  uint32_t height{0};
   /// Frame width in pixel
-  uint32_t width;
+  uint32_t width{0};
   /// Frame data size, unit: byte
-  uint64_t frame_size;
-  /// Frame color space, @see PixelFmt
-  PixelFmt pformat;
+  uint64_t frame_size{0};
+  /// Frame color space, @see edk::PixelFmt
+  PixelFmt pformat{PixelFmt::NV12};
   /// Color standard
-  ColorStd color_std;
+  ColorStd color_std{ColorStd::ITU_BT_709};
   /// MLU device identification
-  int device_id;
+  int device_id{0};
   /// MLU channel in which memory stored
-  int channel_id;
+  int channel_id{0};
+  /// If use cpu decode
+  bool cpu_decode{false};
   /// Plane count for this frame
-  uint32_t n_planes;
+  uint32_t n_planes{0};
   /// Frame strides for each plane
-  uint32_t strides[CN_MAXIMUM_PLANE];
+  uint32_t strides[CN_MAXIMUM_PLANE]{0, 0, 0};
   /// Frame data pointer
-  void* ptrs[CN_MAXIMUM_PLANE];
+  void* ptrs[CN_MAXIMUM_PLANE]{nullptr, nullptr, nullptr};
 };
 
 /**
  * @brief Encode bitstream slice type.
  */
-enum class BitStreamSliceType {
-  SPS_PPS,
-  FRAME
-};
+enum class BitStreamSliceType { SPS_PPS, FRAME };
 
 /**
  * @brief Structure contains encoded data and informations
@@ -146,21 +140,20 @@ struct CnPacket {
   /**
    * Used to release buffer in EasyEncode::ReleaseBuffer
    * when memory from encoder will not be used. Useless in decoder.
-  */
-  uint64_t buf_id;
+   */
+  uint64_t buf_id{0};
   /// Frame data pointer
-  void* data;
+  void* data{nullptr};
   /// Frame length, unit pixel
-  uint64_t length;
+  uint64_t length{0};
   /// Presentation time stamp
-  uint64_t pts;
-  /// Video codec type, @see CodecType
-  CodecType codec_type;
-  /// Bitstream slice type, only used in EasyEncode, @see BitStreamSliceType
-  BitStreamSliceType slice_type;
+  uint64_t pts{0};
+  /// Video codec type, @see edk::CodecType
+  CodecType codec_type{CodecType::H264};
+  /// Bitstream slice type, only used in EasyEncode, @see edk::BitStreamSliceType
+  BitStreamSliceType slice_type{BitStreamSliceType::FRAME};
 };
 
 }  // namespace edk
 
 #endif  // EASYCODEC_VFORMAT_H_
-

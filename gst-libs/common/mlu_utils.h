@@ -29,8 +29,8 @@ set_cnrt_env(GstElement* self, int device_id)
   try {
     edk::MluContext context;
     context.SetDeviceId(device_id);
-    context.ConfigureForThisThread();
-  } catch (edk::MluContextError& err) {
+    context.BindDevice();
+  } catch (edk::Exception& err) {
     GST_ELEMENT_ERROR(self, LIBRARY, SETTINGS, ("set mlu environment failed"), ("%s", err.what()));
     return FALSE;
   }

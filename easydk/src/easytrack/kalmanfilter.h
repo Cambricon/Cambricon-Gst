@@ -1,8 +1,11 @@
 #ifndef EASYTRACK_KALMANFILTER_H
 #define EASYTRACK_KALMANFILTER_H
 
-#include "cxxutil/matrix.h"
+#include <utility>
+#include <vector>
+
 #include "easytrack/easy_track.h"
+#include "matrix.h"
 
 namespace edk {
 
@@ -42,6 +45,8 @@ class KalmanFilter {
    * @brief Calculate the mahalanobis distance
    */
   Matrix GatingDistance(const std::vector<BoundingBox>& measurements);
+
+  BoundingBox GetCurPos();
 
  private:
   Matrix motion_mat_;

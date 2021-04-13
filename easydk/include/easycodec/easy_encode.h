@@ -28,6 +28,9 @@
 #define EASYCODEC_EASY_ENCODE_H_
 
 #include <functional>
+#include <memory>
+
+#include "cxxutil/edk_attribute.h"
 #include "cxxutil/exception.h"
 #include "easycodec/vformat.h"
 
@@ -38,21 +41,21 @@ namespace edk {
  */
 struct RateControl {
   /// Using variable bit rate or constant bit rate
-  bool vbr;
+  bool vbr{false};
   /// The interval of ISLICE.
-  uint32_t gop;
+  uint32_t gop{0};
   /// The numerator of encode frame rate of the venc channel
-  uint32_t frame_rate_num;
+  uint32_t frame_rate_num{0};
   /// The denominator of encode frame rate of the venc channel
-  uint32_t frame_rate_den;
+  uint32_t frame_rate_den{0};
   /// Average bitrate in unit of kpbs, for cbr only.
-  uint32_t bit_rate;
+  uint32_t bit_rate{0};
   /// The max bitrate in unit of kbps, for vbr only .
-  uint32_t max_bit_rate;
-  /// The max qp
-  uint32_t max_qp = 51;
-  /// The min qp
-  uint32_t min_qp = 0;
+  uint32_t max_bit_rate{0};
+  /// The max qp, range [min_qp, 51]
+  uint32_t max_qp{0};
+  /// The min qp, range [0, max_qp]
+  uint32_t min_qp{0};
 };
 
 /**
@@ -122,36 +125,18 @@ enum class VideoLevel {
 };
 
 /*
- * @brief cncodec GOP type, see cncodec developer guide
+ * @brief cncodec GOP type, see developer guide
  */
-enum class GopType {
-  BIDIRECTIONAL,
-  LOW_DELAY,
-  PYRAMID
-};
-
-/**
- * @brief Crop config parameters to control image crop attribute
- * @attention Not support on MLU270 and MLU220
- */
-struct CropConfig {
-  bool enable = false;
-  uint32_t x;
-  uint32_t y;
-  uint32_t w;
-  uint32_t h;
-};
+enum class GopType { BIDIRECTIONAL, LOW_DELAY, PYRAMID };
 
 /**
  * @brief Encode packet callback function type
- * @param CnPacket[in] Packet containing encoded frame information
+ * @param CnPacket Packet containing encoded frame information
  */
 using EncodePacketCallback = std::function<void(const CnPacket&)>;
 
 /// Encode EOS callback function type
 using EncodeEosCallback = std::function<void()>;
-
-TOOLKIT_REGISTER_EXCEPTION(EasyEncode);
 
 class EncodeHandler;
 
@@ -161,6 +146,9 @@ class EncodeHandler;
 class EasyEncode {
  public:
   friend class EncodeHandler;
+  /**
+   * @brief params for creating EasyEncode
+   */
   struct Attr {
     /// The maximum resolution that this endecoder can handle.
     Geometry frame_geometry;
@@ -178,8 +166,8 @@ class EasyEncode {
      */
     CodecType codec_type = CodecType::H264;
 
-    /// Color standard
-    ColorStd color_std = ColorStd::ITU_BT_2020;
+    /// Color space standard
+    ColorStd color_std = ColorStd::ITU_BT_709;
 
     /// Qulity factor for jpeg encoder.
     uint32_t jpeg_qfactor = 50;
@@ -193,9 +181,6 @@ class EasyEncode {
     /// Video rate control parameters.
     RateControl rate_control;
 
-    /// Crop parameters
-    CropConfig crop_config;
-
     /// Input buffer number
     uint32_t input_buffer_num = 3;
 
@@ -208,20 +193,11 @@ class EasyEncode {
     /// B frame number in gop when profile is above main, default 0
     uint32_t b_frame_num = 0;
 
-    /// MB count of intra refresh, default 0 for not enable intra refresh
-    uint32_t ir_count = 0;
-
-    /// Slice max MB count, default 0
-    uint32_t max_mb_per_slice = 0;
-
-    /// GOP type, @see GopType
+    /// GOP type, @see edk::GopType
     GopType gop_type = GopType::BIDIRECTIONAL;
 
-    /// Init table for CABAC, 0,1,2 for H264 and 0,1 for HEVC, default 0
-    uint32_t cabac_init_idc = 0;
-
     /// insert SPS/PPS before IDR,1, insert, 0 not
-    uint32_t insertSpsPpsWhenIDR = 1;
+    bool insert_spspps_when_idr = true;
 
     /// Whether to print encoder attribute
     bool silent = false;
@@ -238,11 +214,15 @@ class EasyEncode {
 
   /**
    * @brief Create encoder by attr. Throw a Exception while error encountered.
-   * @param attr[in] Encoder attribute description
+   * @param attr Encoder attribute description
    * @return Pointer to new encoder instance
    */
-  static EasyEncode* Create(const Attr& attr);
+  static std::unique_ptr<EasyEncode> New(const Attr& attr);
 
+  /**
+   * @brief Abort encoder instance at once
+   * @note aborted encoder instance cannot be used any more
+   */
   void AbortEncoder();
 
   /**
@@ -257,18 +237,18 @@ class EasyEncode {
   ~EasyEncode();
 
   /**
-  * @brief send frame to encoder.
-  * @param frame[in] CNframe
-  * @param eos[in] default false
-  * @return Return false if send data failed.
-  */
+   * @brief send frame to encoder.
+   * @param frame CNframe
+   * @param eos default false
+   * @return Return false if send data failed.
+   */
   bool SendDataCPU(const CnFrame& frame, bool eos = false);
 
   /**
    * @brief Release encoder buffer.
    * @note Release encoder buffer each time received packet while packet content will not be used,
    *       otherwise encoder may be blocked.
-   * @param buf_id[in] Codec buffer id.
+   * @param buf_id Codec buffer id.
    */
   void ReleaseBuffer(uint64_t buf_id);
 

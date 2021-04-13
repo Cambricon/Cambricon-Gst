@@ -25,11 +25,11 @@ namespace edk {
 Shape::Shape(uint32_t _n, uint32_t _h, uint32_t _w, uint32_t _c, uint32_t _stride)
     : n(_n), h(_h), w(_w), c(_c), stride_(_stride) {}
 
-bool Shape::operator==(const Shape &other) {
+bool Shape::operator==(const Shape &other) const {
   return n == other.n && c == other.c && h == other.h && w == other.w && Stride() == other.Stride();
 }
 
-bool Shape::operator!=(const Shape &other) { return !(*this == other); }
+bool Shape::operator!=(const Shape &other) const { return !(*this == other); }
 
 std::ostream &operator<<(std::ostream &os, const Shape &shape) {
   os << "NHWC+STRIDE(" << shape.n << ", " << shape.h << ", " << shape.w << ", " << shape.c << ", " << shape.Stride()
