@@ -283,14 +283,6 @@ void ModelLoaderPrivate::LoadFunction(const char* function_name) {
     layout.dtype = DataType::FLOAT32;
     layout.order = DimOrder::NHWC;
   }
-  int rgb0_index = -1;
-  q_ptr_->WithRGB0Output(&rgb0_index);
-  if (-1 != rgb0_index) {
-    // with rgb0 output
-    CHECK_CONDITION(rgb0_index > 0 && static_cast<uint32_t>(rgb0_index) < o_num_, "Invalid RGB0 data index");
-    o_cpu_layouts_[rgb0_index].dtype = DataType::UINT8;
-    o_cpu_layouts_[rgb0_index].order = DimOrder::NCHW;  // FIXME(liumingxuan): problems!!!
-  }
 }
 
 int64_t ModelLoaderInternalInterface::InputDataSize(int data_index) const {
@@ -314,31 +306,6 @@ DataLayout ModelLoaderInternalInterface::GetMluOutputLayout(int data_index) cons
 }
 
 cnrtFunction_t ModelLoaderInternalInterface::Function() const { return model_->d_ptr_->function_; }
-
-bool ModelLoader::WithRGB0Output(int* output_index) const {
-  if (!WithYUVInput()) return false;
-
-  const ShapeEx& i_shape = d_ptr_->input_shapexs_[0];
-
-  for (size_t index = 0; index < d_ptr_->output_shapexs_.size(); index++) {
-    const ShapeEx& o_shape = d_ptr_->output_shapexs_[index];
-    if (i_shape.H() == o_shape.H() * 3 / 2 && i_shape.W() == o_shape.W() && o_shape.C() == 4) {
-      if (output_index) {
-        *output_index = index;
-      }
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool ModelLoader::WithYUVInput() const {
-  if (d_ptr_->input_shapexs_.empty()) THROW_EXCEPTION(Exception::INTERNAL, "Input shapes is empty");
-
-  if (d_ptr_->input_shapexs_[0].C() == 1) return true;
-  return false;
-}
 
 void ModelLoader::SetCpuInputLayout(DataLayout layout, int data_index) {
   if (data_index < 0 || static_cast<uint32_t>(data_index) >= d_ptr_->i_num_) {
@@ -419,7 +386,7 @@ int64_t ModelLoader::GetInputDataBatchAlignSize(int data_index) const {
   if (data_index < 0 || data_index >= static_cast<int>(InputNum())) return 0;
   int64_t size = 0;
   ModelLoaderInternalInterface model_loader_internal(const_cast<ModelLoader*>(this));
-  size = model_loader_internal.InputDataSize(data_index) / d_ptr_->input_shapexs_[data_index].N();
+  size = model_loader_internal.InputDataSize(data_index) / d_ptr_->input_shapexs_[data_index][0];
   return size;
 }
 
@@ -427,7 +394,7 @@ int64_t ModelLoader::GetOutputDataBatchAlignSize(int data_index) const {
   if (data_index < 0 || data_index >= static_cast<int>(OutputNum())) return 0;
   int64_t size = 0;
   ModelLoaderInternalInterface model_loader_internal(const_cast<ModelLoader*>(this));
-  size = model_loader_internal.OutputDataSize(data_index) / d_ptr_->output_shapexs_[data_index].N();
+  size = model_loader_internal.OutputDataSize(data_index) / d_ptr_->output_shapexs_[data_index][0];
   return size;
 }
 

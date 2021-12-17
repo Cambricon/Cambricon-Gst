@@ -24,7 +24,8 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include "cnrt.h"
+
+#include "internal/cnrt_wrap.h"
 
 using std::string;
 
@@ -80,7 +81,7 @@ void MluResize::SetMluQueue(cnrtQueue_t queue, bool exclusive) {
 
 void MluResize::DestroyMluQueue() {
   if (d_ptr_->queue_ != nullptr) {
-    cnrtDestroyQueue(d_ptr_->queue_);
+    cnrt::QueueDestroy(d_ptr_->queue_);
   }
   d_ptr_->queue_ = nullptr;
 }
@@ -135,8 +136,8 @@ bool MluResize::Init(const MluResize::Attr& attr) {
       return false;
   }
 
-  if (CNRT_RET_SUCCESS != cnrtCreateQueue(&d_ptr_->queue_)) {
-    d_ptr_->estr_ = "cnrtCreateQueue failed";
+  if (CNRT_RET_SUCCESS != cnrt::QueueCreate(&d_ptr_->queue_)) {
+    d_ptr_->estr_ = "cnrt::QueueCreate failed";
     return false;
   }
   return 0 == ::PrepareKernelParam(d_ptr_->attr_.src_h, d_ptr_->attr_.src_w, d_ptr_->attr_.src_stride_y,

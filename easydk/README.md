@@ -80,24 +80,19 @@ After finished prerequiste, you can build instructions with the following steps:
 
    | cmake option       | range           | default | description              |
    | ------------------ | --------------- | ------- | ------------------------ |
-   | MLU                |                 | MLU270  | specify the MLU platform |
    | BUILD_SAMPLES      | ON / OFF        | OFF     | build with samples       |
    | BUILD_TESTS        | ON / OFF        | OFF     | build with tests         |
-   | RELEASE            | ON / OFF        | ON      | release / debug          |
    | WITH_CODEC         | ON / OFF        | ON      | build codec              |
    | WITH_INFER         | ON / OFF        | ON      | build infer              |
    | WITH_TRACKER       | ON / OFF        | ON      | build tracker            |
    | WITH_BANG          | ON / OFF        | ON      | build bang               |
    | WITH_INFER_SERVER  | ON / OFF        | ON      | build infer-server       |
-   | WITH_CURL          | ON / OFF        | ON      | build with libcurl       |
-   | WITH_TURBOJPEG     | ON / OFF        | ON      | build with turbo-jpeg    |
+   | WITH_TURBOJPEG     | ON / OFF        | OFF     | build with turbo-jpeg    |
    | ENABLE_KCF         | ON / OFF        | OFF     | build with KCF track     |
    | SANITIZE_MEMORY    | ON / OFF        | OFF     | check memory             |
    | SANITIZE_ADDRESS   | ON / OFF        | OFF     | check address            |
    | SANITIZE_THREAD    | ON / OFF        | OFF     | check thread             |
    | SANITIZE_UNDEFINED | ON / OFF        | OFF     | check undefined behavior |
-
-   > Supported MLU platform: MLU270, MLU220, MLU220EDGE. (MLU220EDGE need cross-compile)
 
    Example:
 

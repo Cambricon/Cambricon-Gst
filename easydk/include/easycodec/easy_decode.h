@@ -144,20 +144,6 @@ class EasyDecode {
    * @brief Send data to decoder, block when STATUS is pause.
    *        An Exception is thrown when send data failed.
    *
-   * @deprecated use `bool FeedData(const CnPacket&, bool)` and `bool FeedEos()` instead
-   * @param packet bytestream data
-   * @param eos indicate whether this packet is end-of-stream
-   * @param integral_frame indicate whether packet contain an integral frame
-   *
-   * @return return false when STATUS is not UNINITIALIZED or STOP.
-   */
-  attribute_deprecated bool SendData(const CnPacket& packet, bool eos = false,
-                                     bool integral_frame = false) noexcept(false);
-
-  /**
-   * @brief Send data to decoder, block when STATUS is pause.
-   *        An Exception is thrown when send data failed.
-   *
    * @param packet bytestream data
    * @param integral_frame indicate whether packet contain an integral frame
    *
@@ -188,7 +174,7 @@ class EasyDecode {
    * @param frame Frame you want to copy
    * @return when error occurs, return false.
    */
-  bool CopyFrameD2H(void* dst, const CnFrame& frame);
+  static bool CopyFrameD2H(void* dst, const CnFrame& frame);
 
   /**
    * @brief Gets the minimum decode output buffer count.

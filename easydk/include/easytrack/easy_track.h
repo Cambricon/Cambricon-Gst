@@ -64,6 +64,8 @@ struct DetectObject {
    * @attention The dimension of the feature vector is 128.
    */
   std::vector<float> feature;
+  /// internal
+  mutable float feat_mold;
 };
 
 /// Alias of vector stored DetectObject
@@ -89,12 +91,12 @@ struct TrackFrame {
   int device_id;
 
   /**
-   * @brief Color space enumaration.
+   * @brief Color space enumeration.
    */
   enum class ColorSpace { GRAY, NV21, NV12, RGB24, BGR24 } format;
 
   /**
-   * @brief Device type enumaration.
+   * @brief Device type enumeration.
    */
   enum class DevType {
     CPU = 0,

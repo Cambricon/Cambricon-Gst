@@ -80,8 +80,6 @@ Easydk仅支持源码编译的方式使用，按如下步骤编译Easydk (`${EAS
 
    | cmake 选项         | 范围            | 默认值  | 描述                      |
    | ------------------ | --------------- | ------- | ------------------------  |
-   | MLU                |                 | MLU270  | 指定编译MLU平台           |
-   | RELEASE            | ON / OFF        | ON      | 编译模式release / debug   |
    | BUILD_SAMPLES      | ON / OFF        | OFF     | 编译samples               |
    | BUILD_TESTS        | ON / OFF        | OFF     | 编译tests                 |
    | WITH_CODEC         | ON / OFF        | ON      | 编译EasyCodec             |
@@ -89,15 +87,12 @@ Easydk仅支持源码编译的方式使用，按如下步骤编译Easydk (`${EAS
    | WITH_TRACKER       | ON / OFF        | ON      | 编译EasyTracker           |
    | WITH_BANG          | ON / OFF        | ON      | 编译EasyBang              |
    | WITH_INFER_SERVER  | ON / OFF        | ON      | 编译infer-server          |
-   | WITH_CURL          | ON / OFF        | ON      | 依赖libcurl               |
-   | WITH_TURBOJPEG     | ON / OFF        | ON      | 编译turbo-jpeg            |
+   | WITH_TURBOJPEG     | ON / OFF        | OFF     | 编译turbo-jpeg            |
    | ENABLE_KCF         | ON / OFF        | OFF     | Easytrack支持KCF          |
    | SANITIZE_MEMORY    | ON / OFF        | OFF     | 检查内存                  |
    | SANITIZE_ADDRESS   | ON / OFF        | OFF     | 检查地址                  |
    | SANITIZE_THREAD    | ON / OFF        | OFF     | 检查多线程                |
    | SANITIZE_UNDEFINED | ON / OFF        | OFF     | 检查未定义行为            |
-
-   > MLU平台支持： MLU270, MLU220, MLU220EDGE。（MLU220EDGE需要交叉编译）
 
    示例:
 

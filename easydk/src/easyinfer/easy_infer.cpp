@@ -37,7 +37,7 @@ class EasyInferPrivate {
   void** param_ = nullptr;
   int batch_size_ = 1;
   cnrtRuntimeContext_t runtime_context_ = nullptr;
-  TimeMark mark_start_, mark_end_;
+  std::unique_ptr<TimeMark> mark_start_{nullptr}, mark_end_{nullptr};
 };
 
 EasyInfer::EasyInfer() {
@@ -90,6 +90,9 @@ void EasyInfer::Init(std::shared_ptr<ModelLoader> model, int dev_id) {
   d_ptr_->queue_ = MluTaskQueueProxy::Wrap(cnrt_queue);
   // init param
   d_ptr_->param_ = new void*[d_ptr_->model_->InputNum() + d_ptr_->model_->OutputNum()];
+
+  d_ptr_->mark_start_.reset(new TimeMark);
+  d_ptr_->mark_end_.reset(new TimeMark);
 }
 
 void EasyInfer::Run(void** input, void** output, float* hw_time) const {
@@ -108,7 +111,7 @@ void EasyInfer::Run(void** input, void** output, float* hw_time) const {
   cnrtQueue_t q = MluTaskQueueProxy::GetCnrtQueue(d_ptr_->queue_);
   if (hw_time) {
     // place start event
-    d_ptr_->mark_start_.Mark(q);
+    d_ptr_->mark_start_->Mark(q);
   }
 
   CALL_CNRT_FUNC(cnrtInvokeRuntimeContext(d_ptr_->runtime_context_, d_ptr_->param_, q, NULL),
@@ -116,11 +119,11 @@ void EasyInfer::Run(void** input, void** output, float* hw_time) const {
 
   if (hw_time) {
     // place end event
-    d_ptr_->mark_end_.Mark(q);
+    d_ptr_->mark_end_->Mark(q);
   }
   d_ptr_->queue_->Sync();
   if (hw_time) {
-    *hw_time = TimeMark::Count(d_ptr_->mark_start_, d_ptr_->mark_end_);
+    *hw_time = TimeMark::Count(*d_ptr_->mark_start_, *d_ptr_->mark_end_);
     LOGI(INFER) << "Inference hardware time " << *hw_time << " ms";
   }
 }

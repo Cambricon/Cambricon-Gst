@@ -6,21 +6,13 @@
 
 namespace edk {
 
-const Matrix &Matrix::operator=(std::vector<std::vector<float>> init_list) {
-  arrays_ = init_list;
-  return *this;
-}
-
 const Matrix &Matrix::operator+=(const Matrix &m) {
   if (Rows() != m.Rows() || Cols() != m.Cols())
     THROW_EXCEPTION(Exception::INVALID_ARG, "Matrices of two different shape cannot be added");
 
-  int r = Rows();
-  int c = Cols();
-  for (int i = 0; i < r; ++i) {
-    for (int j = 0; j < c; ++j) {
-      arrays_[i][j] += m[i][j];
-    }
+  size_t size = Size();
+  for (uint32_t i = 0; i < size; ++i) {
+    arrays_[i] += m[i];
   }
   return *this;
 }
@@ -29,55 +21,22 @@ const Matrix &Matrix::operator-=(const Matrix &m) {
   if (Rows() != m.Rows() || Cols() != m.Cols())
     THROW_EXCEPTION(Exception::INVALID_ARG, "Matrices of two different shape cannot be subtracted");
 
-  int r = Rows();
-  int c = Cols();
-
-  for (int i = 0; i < r; ++i) {
-    for (int j = 0; j < c; ++j) {
-      arrays_[i][j] -= m[i][j];
-    }
+  size_t size = Size();
+  for (uint32_t i = 0; i < size; ++i) {
+    arrays_[i] -= m[i];
   }
-  return *this;
-}
-
-const Matrix &Matrix::operator*=(const Matrix &m) {
-  if (Cols() != m.Rows() || !m.Square()) THROW_EXCEPTION(Exception::INVALID_ARG, "Matrices can not be multiplied");
-
-  Matrix ret(Rows(), Cols());
-
-  int r = Rows();
-  int c = Cols();
-
-  for (int i = 0; i < r; ++i) {
-    for (int j = 0; j < c; ++j) {
-      double sum = 0.0;
-      for (int k = 0; k < c; ++k) {
-        sum += arrays_[i][k] * m[k][j];
-      }
-      ret[i][j] = sum;
-    }
-  }
-  *this = ret;
   return *this;
 }
 
 const Matrix operator+(const Matrix &lhs, const Matrix &rhs) {
-  Matrix m;
-  if (lhs.Rows() != rhs.Rows() || lhs.Cols() != rhs.Cols())
-    THROW_EXCEPTION(Exception::INVALID_ARG, "Matrices of two different shape cannot be added");
-
-  m = lhs;
+  Matrix m = lhs;
   m += rhs;
 
   return m;
 }
 
 const Matrix operator-(const Matrix &lhs, const Matrix &rhs) {
-  if (lhs.Rows() != rhs.Rows() || lhs.Cols() != rhs.Cols())
-    THROW_EXCEPTION(Exception::INVALID_ARG, "Matrices of two different shape cannot be subtracted");
-
   Matrix m = lhs;
-  m = lhs;
   m -= rhs;
 
   return m;
@@ -88,58 +47,46 @@ const Matrix operator*(const Matrix &lhs, const Matrix &rhs) {
 
   Matrix m(lhs.Rows(), rhs.Cols());
 
-  int r = m.Rows();
-  int c = m.Cols();
-  int K = lhs.Cols();
+  uint32_t r = m.Rows();
+  uint32_t c = m.Cols();
+  uint32_t K = lhs.Cols();
 
-  for (int i = 0; i < r; ++i) {
-    for (int j = 0; j < c; ++j) {
+  for (uint32_t i = 0; i < r; ++i) {
+    for (uint32_t j = 0; j < c; ++j) {
       double sum = 0.0;
-      for (int k = 0; k < K; ++k) {
-        sum += lhs[i][k] * rhs[k][j];
+      for (uint32_t k = 0; k < K; ++k) {
+        sum += lhs(i, k) * rhs(k, j);
       }
-      m[i][j] = sum;
+      m(i, j) = sum;
     }
   }
   return m;
 }
 
-const Matrix Matrix::Trans() const {
+Matrix Matrix::Trans() const {
   if (Empty()) THROW_EXCEPTION(Exception::INVALID_ARG, "Empty Matrix do not have transpose");
 
-  int row = Cols();
-  int col = Rows();
+  uint32_t row = Cols();
+  uint32_t col = Rows();
   Matrix ret(row, col);
 
-  for (int i = 0; i < row; ++i) {
-    for (int j = 0; j < col; ++j) {
-      ret[i][j] = arrays_[j][i];
+  for (uint32_t i = 0; i < row; ++i) {
+    for (uint32_t j = 0; j < col; ++j) {
+      ret(i, j) = arrays_[j * cols_ + i];
     }
   }
   return ret;
 }
 
-static void SolveInverse(float *A, int n, float *m_inv);
+static void SolveInverse(const float *A, int n, float *m_inv);
 
-const Matrix Matrix::Inv() const {
+Matrix Matrix::Inv() const {
   if (!Square()) {
     THROW_EXCEPTION(Exception::INVALID_ARG, "Non-square matrix do not have inverse");
   }
-  int n = Rows();
-  float *m = new float[n * n];
-  for (int i = 0; i < n; ++i) {
-    memcpy(m + i * n, arrays_[i].data(), n * sizeof(float));
-  }
-  float *m_inv = new float[n * n];
-  SolveInverse(m, n, m_inv);
+  uint32_t n = Rows();
   Matrix ret(n, n);
-  for (int i = 0; i < n; ++i) {
-    for (int j = 0; j < n; ++j) {
-      ret[i][j] = m_inv[i * n + j];
-    }
-  }
-  delete[] m_inv;
-  delete[] m;
+  SolveInverse(arrays_.data(), n, ret.arrays_.data());
   return ret;
 }
 
@@ -148,9 +95,9 @@ bool operator==(const Matrix &lhs, const Matrix &rhs) {
     return false;
   }
 
-  for (int i = 0; i < lhs.Rows(); ++i) {
-    for (int j = 0; j < lhs.Cols(); ++j) {
-      if (lhs[i][j] != rhs[i][j]) {
+  for (uint32_t i = 0; i < lhs.Rows(); ++i) {
+    for (uint32_t j = 0; j < lhs.Cols(); ++j) {
+      if (lhs(i, j) != rhs(i, j)) {
         return false;
       }
     }
@@ -166,7 +113,7 @@ void Matrix::Show() const {
   const int nRows = Rows();
   printf("------- Matrix -------\n");
   for (int i = 0; i < nRows; i++) {
-    for (int j = 0; j < nCols; j++) printf("%.2f ", arrays_[i][j]);
+    for (int j = 0; j < nCols; j++) printf("%.2f ", arrays_[i * cols_ + j]);
     printf("\n");
   }
   printf("----------------------\n");
@@ -277,7 +224,7 @@ static void Transpose(float *mtx, int m, int n) {
 }
 
 // LUP solve inverse API
-static void SolveInverse(float *A, int n, float *inv_A) {
+static void SolveInverse(const float *A, int n, float *inv_A) {
   // make a copy of matrix A, since LUP descomposition will change it
   double *A_mirror = new double[n * n]();
   float *inv_A_each = new float[n]();

@@ -431,6 +431,9 @@ void EncodeHandler::ReceivePacket(void *_packet) {
     CnPacket cn_packet;
     if (jpeg_encode_) {
       auto packet = reinterpret_cast<cnjpegEncOutput *>(_packet);
+      if (packet->result != 0) {
+        LOGE(ENCODE) << "Encode receive a wrong packet. pts [" << packet->pts << "]";
+      }
       cn_packet.data = new uint8_t[packet->streamLength];
       auto ret = cnrtMemcpy(cn_packet.data, reinterpret_cast<void *>(packet->streamBuffer.addr + packet->dataOffset),
                             packet->streamLength, CNRT_MEM_TRANS_DIR_DEV2HOST);
@@ -551,6 +554,9 @@ bool EncodeHandler::SendJpegData(const CnFrame &frame, bool eos) {
   if (eos) {
     input.flags |= CNJPEGENC_FLAG_EOS;
     send_eos_ = true;
+    if (frame.width * frame.height == 0) {
+      input.flags |= CNJPEGENC_FLAG_INVALID_FRAME;
+    }
   } else {
     input.flags &= (~CNJPEGENC_FLAG_EOS);
   }

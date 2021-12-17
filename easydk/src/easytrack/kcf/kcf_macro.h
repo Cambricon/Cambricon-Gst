@@ -69,8 +69,8 @@
   { 1338, 418, 167, 379 }
 
 // for subwindow_func.h
-#define ALIGN_DN_TO_64(x) ((int)(x)) / 64 * 64
-#define ALIGN_UP_TO_64(x) ((int)(x) + 63) / 64 * 64
+#define ALIGN_DN_TO_64(x) (static_cast<int>(x)) / 64 * 64
+#define ALIGN_UP_TO_64(x) (static_cast<int>(x) + 63) / 64 * 64
 
 #define ALIGNED_TMP_SZ 128
 #define aligned_BLOCK_1 TMP_SZ* ALIGNED_TMP_SZ

@@ -7,8 +7,8 @@ if(POLICY CMP0054)
 endif()
 
 # ---[ GStreamer-Cambricon-SDK project
-message("---------- Build Gst-cnsdk ----------")
-project(Gst-CNSDK C CXX)
+message("---------- Build Cambricon-Gst ----------")
+project(Cambricon-Gst C CXX)
 
 option(RELEASE "Build type" ON)
 option(CODE_COVERAGE_TEST "Build code coverage test" OFF)
@@ -34,11 +34,11 @@ else()
 endif()
 
 set(CMAKE_CXX_FLAGS "-fPIC -Wall -Werror -std=c++11")
-set(CMAKE_CXX_FLAGS_DEBUG "-DDEBUG -g")
+set(CMAKE_CXX_FLAGS_DEBUG "-g")
 set(CMAKE_CXX_FLAGS_RELEASE "-DNDEBUG -O3")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
-set(CMAKE_C_FLAGS_DEBUG "-DDEBUG -g")
+set(CMAKE_C_FLAGS_DEBUG "-g")
 set(CMAKE_C_FLAGS_RELEASE "-DNDEBUG -O3")
 
 if(USE_libstdcpp)
@@ -52,8 +52,6 @@ if(CODE_COVERAGE_TEST)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
 endif()
 
-set(MLU_PLATFORM MLU270)
-add_definitions(-DGST_MLU270)
 ######################### 3rdparty ########################################
 
 # ---[ gstreamer
@@ -71,33 +69,26 @@ endif()
 
 # ---[ Includes
 include_directories(
-  ${PROJECT_SOURCE_DIR}
-  ${PROJECT_SOURCE_DIR}/gst
-  ${PROJECT_SOURCE_DIR}/gst-libs
-  ${PROJECT_SOURCE_DIR}/easydk/include
-  ${GSTREAMER_INCLUDE_DIRS}
-  ${GSTREAMER_VIDEO_INCLUDE_DIRS}
-  $ENV{NEUWARE_HOME}/include
 )
 
 # ---[ cnrt
-set(CNRT_LIBS      "$ENV{NEUWARE_HOME}/lib64/libcnrt.so")
+set(CNRT_LIB      "$ENV{NEUWARE_HOME}/lib64/libcnrt.so")
 
 # ---[ cncodec
-set(CNCODEC_LIBS   "$ENV{NEUWARE_HOME}/lib64/libcncodec.so")
+set(CNCODEC_LIB   "$ENV{NEUWARE_HOME}/lib64/libcncodec.so")
 
 # ---[ edk
 add_subdirectory(easydk)
-set(EDK_LIBS       "easydk")
+set(EDK_LIB       "easydk")
 
 set(LINK_LIBRARIES
   ${GLIB_LIBRARIES}
   ${GLIB_GOBJECT_LIBRARIES}
   ${GSTREAMER_LIBRARIES}
   ${GSTREAMER-VIDEO_LIBRARIES}
-  ${CNRT_LIBS}
-  ${CNCODEC_LIBS}
-  ${EDK_LIBS}
+  ${CNRT_LIB}
+  ${CNCODEC_LIB}
+  ${EDK_LIB}
 )
 
 # ---[ collect source file
@@ -131,12 +122,19 @@ add_library(${name} SHARED
             ${decode_src}
             ${cvt_src}
             ${encode_src})
+target_include_directories(${name} PRIVATE
+                           ${PROJECT_SOURCE_DIR}/gst
+                           ${PROJECT_SOURCE_DIR}/gst-libs
+                           ${PROJECT_SOURCE_DIR}/easydk/include
+                           ${GSTREAMER_INCLUDE_DIRS}
+                           ${GSTREAMER_VIDEO_INCLUDE_DIRS}
+                           $ENV{NEUWARE_HOME}/include)
 target_link_libraries(${name} ${LINK_LIBRARIES})
 
 if(BUILD_TEST)
   message("Build tests")
-  add_subdirectory(tests)
   enable_testing()
+  add_subdirectory(tests)
 endif()
 
 if(BUILD_SAMPLES)

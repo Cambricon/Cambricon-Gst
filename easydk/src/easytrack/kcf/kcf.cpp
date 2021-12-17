@@ -28,7 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#include "cnrt.h"
+#include "internal/cnrt_wrap.h"
 #include "kcf.h"
 #include "kcf_macro.h"
 
@@ -227,17 +227,17 @@ void kcf_init(KCFHandle* handle, cnrtQueue_t queue, float threshold) {
   handle->threshold = threshold_half;
   const int num_dft_mats = (TMP_SZ / 2) * 8 * TMP_SZ_64 * TMP_SZ_64;
 
-  CNRT_CHECK(cnrtMalloc((void**)&handle->dft_mat, num_dft_mats * sizeof(half)));
+  CNRT_CHECK(cnrtMalloc(static_cast<void**>(&handle->dft_mat), num_dft_mats * sizeof(half)));
   uint32_t dft_mat_zipped_size = sizeof(_dft_mat_table_zipped) / sizeof(half);
   uint32_t dft_mat_size = 0;
-  half* dft_mat_half = (half*)malloc(num_dft_mats * sizeof(half));
+  half* dft_mat_half = static_cast<half*>(malloc(num_dft_mats * sizeof(half)));
   decompress_dft_mat(_dft_mat_table_zipped, dft_mat_zipped_size, dft_mat_half, &dft_mat_size);
   printf("decompress_dft_mat ok(%u)\n", dft_mat_size);
 
   CNRT_CHECK(cnrtMemcpy(handle->dft_mat, dft_mat_half, num_dft_mats * sizeof(half), CNRT_MEM_TRANS_DIR_HOST2DEV));
   free(dft_mat_half);
 
-  half* cos_table_half = (half*)malloc(1024 * sizeof(half));
+  half* cos_table_half = static_cast<half*>(malloc(1024 * sizeof(half)));
   // cnrtConvertFloatToHalfArray(cos_table_half, _cos_table, 1024);
   for (int i = 0; i < 1024; i++) {
     cnrtConvertFloatToHalf(cos_table_half + i, _cos_table[i]);
@@ -248,7 +248,7 @@ void kcf_init(KCFHandle* handle, cnrtQueue_t queue, float threshold) {
 
   constexpr const int buffer_size_bytes = align(16 + MAX_ROI_NUM * 8) * sizeof(int);
   CNRT_CHECK(cnrtMalloc(reinterpret_cast<void**>(&handle->mlu_buffer), buffer_size_bytes));
-  handle->cpu_buffer = (int*)malloc(buffer_size_bytes);
+  handle->cpu_buffer = static_cast<int*>(malloc(buffer_size_bytes));
 
   CNRT_CHECK(cnrtMalloc(reinterpret_cast<void**>(&handle->args), MAX_ROI_NUM * BLOCK(6) * sizeof(half)));
   CNRT_CHECK(cnrtMalloc(reinterpret_cast<void**>(&handle->scale), MAX_ROI_ALIGN * sizeof(half)));
@@ -292,7 +292,7 @@ void kcf_initKernel(KCFHandle* handle, half* frame, half* rois_mlu, __Rect* out_
   CNRT_CHECK(cnrtKernelParamsBufferAddParam(params, &handle->scale, sizeof(half*)));
 
   CNRT_CHECK(cnrtInvokeKernel_V2(reinterpret_cast<void*>(&initKernel), dim, params, c, pQueue));
-  CNRT_CHECK(cnrtSyncQueue(pQueue));
+  CNRT_CHECK(cnrt::QueueSync(pQueue));
   CNRT_CHECK(cnrtDestroyKernelParamsBuffer(params));
 
   int* cpu_buffer = handle->cpu_buffer;
@@ -343,7 +343,7 @@ void kcf_updateKernel(KCFHandle* handle, half* frame, __Rect* out_roi, int roi_n
 
   CNRT_CHECK(cnrtInvokeKernel_V2(reinterpret_cast<void*>(&updateKernel), dim, params, c, pQueue));
   // FIXME(dingminghui): do not sync?
-  CNRT_CHECK(cnrtSyncQueue(pQueue));
+  CNRT_CHECK(cnrt::QueueSync(pQueue));
   CNRT_CHECK(cnrtDestroyKernelParamsBuffer(params));
 
   int* cpu_buffer = handle->cpu_buffer;

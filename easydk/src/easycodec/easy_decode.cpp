@@ -39,13 +39,7 @@
 #include "format_info.h"
 #include "vpu_turbo_table.h"
 
-#ifdef ENABLE_TURBOJPEG
-#include "cxxutil/threadsafe_queue.h"
-extern "C" {
-#include "libyuv.h"
-#include "turbojpeg.h"
-}
-#endif
+#include "progressive_jpeg.h"
 
 using std::mutex;
 using std::string;
@@ -54,15 +48,6 @@ using std::unique_lock;
 
 #define ALIGN(size, alignment) (((u32_t)(size) + (alignment)-1) & ~((alignment)-1))
 
-#define CALL_CNRT_FUNC(func, msg)                                                            \
-  do {                                                                                       \
-    int ret = (func);                                                                        \
-    if (0 != ret) {                                                                          \
-      LOGE(DECODE) << msg << " error code: " << ret;                                         \
-      THROW_EXCEPTION(Exception::INTERNAL, msg " cnrt error code : " + std::to_string(ret)); \
-    }                                                                                        \
-  } while (0)
-
 // cncodec add version macro since v1.6.0
 #ifndef CNCODEC_VERSION
 #define CNCODEC_VERSION 0
@@ -70,90 +55,16 @@ using std::unique_lock;
 
 namespace edk {
 
-namespace detail {
-#ifdef ENABLE_TURBOJPEG
-bool BGRToNV21(uint8_t* src, uint8_t* dst_y, int dst_y_stride, uint8_t* dst_uv, int dst_uv_stride,
-                int width, int height) {
-  int i420_stride_y = width;
-  int i420_stride_u = width / 2;
-  int i420_stride_v = width / 2;
-  uint8_t* i420 = new uint8_t[width * height * 3 / 2];
-  libyuv::RGB24ToI420(src, width * 3,
-                      i420, i420_stride_y,
-                      i420 + width * height, i420_stride_u,
-                      i420 + width * height * 5 / 4, i420_stride_v,
-                      width, height);
-
-  libyuv::I420ToNV21(i420, i420_stride_y,
-                     i420 + width * height, i420_stride_u,
-                     i420 + width * height * 5 / 4, i420_stride_v,
-                     dst_y, dst_y_stride,
-                     dst_uv, dst_uv_stride,
-                     width, height);
-  delete[] i420;
-  return true;
-}
-
-bool BGRToNV12(uint8_t* src, uint8_t* dst_y,
-               int dst_y_stride, uint8_t* dst_vu, int dst_vu_stride,
-               int width, int height) {
-  int i420_stride_y = width;
-  int i420_stride_u = width / 2;
-  int i420_stride_v = width / 2;
-  uint8_t* i420 = new uint8_t[width * height * 3 / 2];
-  libyuv::RGB24ToI420(src, width * 3,
-                      i420, i420_stride_y,
-                      i420 + width * height, i420_stride_u,
-                      i420 + width * height * 5 / 4, i420_stride_v,
-                      width, height);
-
-
-  libyuv::I420ToNV12(i420, i420_stride_y,
-                     i420 + width * height, i420_stride_u,
-                     i420 + width * height * 5 / 4, i420_stride_v,
-                     dst_y, dst_y_stride,
-                     dst_vu, dst_vu_stride,
-                     width, height);
-  delete[] i420;
-  return true;
-}
-#endif
-
-int CheckProgressiveMode(uint8_t* data, uint64_t length) {
-  static constexpr uint16_t kJPEG_HEADER = 0xFFD8;
-  uint64_t i = 0;
-  uint16_t header = (data[i] << 8) | data[i + 1];
-  if (header != kJPEG_HEADER) {
-    LOGE(DECODE) << "Not Support image format, header is: " << header;
-    return -1;
-  }
-  i = i + 2;  // jump jpeg header
-  while (i < length) {
-    uint16_t seg_header = (data[i] << 8) | data[i + 1];
-    if (seg_header == 0xffc2 || seg_header == 0xffca) {
-      return 1;
-    }
-    uint16_t step = (data[i + 2] << 8) | data[i + 3];
-    i += 2;  // jump seg header
-    i += step;  // jump whole seg
-  }
-  return 0;
-}
-}  // namespace detail
-
 static void PrintCreateAttr(cnvideoDecCreateInfo* p_attr) {
   printf("%-32s%s\n", "param", "value");
   printf("-------------------------------------\n");
   printf("%-32s%u\n", "Codectype", p_attr->codec);
   printf("%-32s%u\n", "Instance", p_attr->instance);
   printf("%-32s%u\n", "DeviceID", p_attr->deviceId);
-  printf("%-32s%u\n", "MemoryAllocate", p_attr->allocType);
   printf("%-32s%u\n", "PixelFormat", p_attr->pixelFmt);
   printf("%-32s%u\n", "Progressive", p_attr->progressive);
   printf("%-32s%u\n", "Width", p_attr->width);
   printf("%-32s%u\n", "Height", p_attr->height);
-  printf("%-32s%u\n", "BitDepthMinus8", p_attr->bitDepthMinus8);
-  printf("%-32s%u\n", "InputBufferNum", p_attr->inputBufNum);
   printf("%-32s%u\n", "OutputBufferNum", p_attr->outputBufNum);
   printf("-------------------------------------\n");
 }
@@ -163,12 +74,9 @@ static void PrintCreateAttr(cnjpegDecCreateInfo* p_attr) {
   printf("-------------------------------------\n");
   printf("%-32s%u\n", "Instance", p_attr->instance);
   printf("%-32s%u\n", "DeviceID", p_attr->deviceId);
-  printf("%-32s%u\n", "MemoryAllocate", p_attr->allocType);
   printf("%-32s%u\n", "PixelFormat", p_attr->pixelFmt);
   printf("%-32s%u\n", "Width", p_attr->width);
   printf("%-32s%u\n", "Height", p_attr->height);
-  printf("%-32s%u\n", "BitDepthMinus8", p_attr->bitDepthMinus8);
-  printf("%-32s%u\n", "InputBufferNum", p_attr->inputBufNum);
   printf("%-32s%u\n", "OutputBufferNum", p_attr->outputBufNum);
   printf("%-32s%u\n", "InputBufferSize", p_attr->suggestedLibAllocBitStrmBufSize);
   printf("-------------------------------------\n");
@@ -193,9 +101,7 @@ class DecodeHandler {
   void ReceiveFrame(void* out);
   int ReceiveSequence(cnvideoDecSequenceInfo* info);
   void ReceiveEOS();
-#ifdef ENABLE_TURBOJPEG
-  bool ReleaseBuffer(size_t buf_id);
-#endif
+  void ReleaseBuffer(uint64_t buf_id);
 
   friend class EasyDecode;
 
@@ -224,11 +130,7 @@ class DecodeHandler {
   int minimum_buf_cnt_ = 0;
 
 #ifdef ENABLE_TURBOJPEG
-  std::unordered_map<size_t, void*> memory_pool_map_;
-  ThreadSafeQueue<size_t> memory_ids_;
-  tjhandle tjinstance_;
-  uint8_t* yuv_cpu_data_ = nullptr;
-  uint8_t* bgr_cpu_data_ = nullptr;
+  std::unique_ptr<ProgressiveJpegDecoder> progressive_jpeg_decoder_{nullptr};
 #endif
 
   std::atomic<EasyDecode::Status> status_{EasyDecode::Status::RUNNING};
@@ -283,7 +185,7 @@ DecodeHandler::~DecodeHandler() {
     unique_lock<mutex> eos_lk(eos_mtx_);
     if (!got_eos_) {
       if (!send_eos_ && handle_) {
-        eos_mtx_.unlock();
+        eos_lk.unlock();
         LOGI(DECODE) << "Send EOS in destruct";
         decoder_->FeedEos();
       } else {
@@ -302,21 +204,6 @@ DecodeHandler::~DecodeHandler() {
 
     event_cond_.notify_all();
     event_loop_.join();
-
-    if (jpeg_decode_) {
-  #ifdef ENABLE_TURBOJPEG
-      for (auto& iter : memory_pool_map_) {
-        cnrtFree(iter.second);
-      }
-      tjDestroy(tjinstance_);
-      if (yuv_cpu_data_) {
-        delete[] yuv_cpu_data_;
-      }
-      if (bgr_cpu_data_) {
-        delete[] bgr_cpu_data_;
-      }
-#endif
-    }
 
     if (handle_) {
       if (jpeg_decode_) {
@@ -408,10 +295,10 @@ void DecodeHandler::AbortDecoder() {
       cnvideoDecAbort(handle_);
     }
     handle_ = nullptr;
+    status_.store(EasyDecode::Status::EOS);
     if (attr_.eos_callback) {
       attr_.eos_callback();
     }
-    status_.store(EasyDecode::Status::EOS);
 
     unique_lock<mutex> eos_lk(eos_mtx_);
     got_eos_ = true;
@@ -448,48 +335,27 @@ void DecodeHandler::InitJpegDecode(const EasyDecode::Attr& attr) {
   jpeg_decode_ = true;
   pixel_fmt_info_ = FormatInfo::GetFormatInfo(attr.pixel_format);
 
-    memset(&jparams_, 0, sizeof(cnjpegDecCreateInfo));
-    jparams_.deviceId = attr.dev_id;
-    jparams_.instance = CNJPEGDEC_INSTANCE_AUTO;
-    jparams_.pixelFmt = pixel_fmt_info_->cncodec_fmt;
-    jparams_.colorSpace = ColorStdCast(attr.color_std);
-    jparams_.width = attr.frame_geometry.w;
-    jparams_.height = attr.frame_geometry.h;
-    jparams_.inputBufNum = attr.input_buffer_num;
-    jparams_.outputBufNum = attr.output_buffer_num;
-    jparams_.bitDepthMinus8 = 0;
-    jparams_.allocType = CNCODEC_BUF_ALLOC_LIB;
-    jparams_.userContext = reinterpret_cast<void*>(this);
-    jparams_.suggestedLibAllocBitStrmBufSize = (4U << 20);
-    jparams_.enablePreparse = 0;
-    if (!attr.silent) {
-      PrintCreateAttr(&jparams_);
-    }
-    int ecode = cnjpegDecCreate(&handle_, CNJPEGDEC_RUN_MODE_ASYNC, &EventHandler, &jparams_);
-    if (0 != ecode) {
-      THROW_EXCEPTION(Exception::INIT_FAILED, "Create jpeg decode failed: " + to_string(ecode));
-    }
-#ifdef ENABLE_TURBOJPEG
-    const size_t width = attr.frame_geometry.w;
-    const size_t stride = ALIGN(width, 128);
-    const size_t height = attr.frame_geometry.h;
-    const size_t plane_num = 2;
-    const size_t outputBufNum = jparams_.outputBufNum;
-    for (size_t i = 0; i < outputBufNum; ++i) {
-      uint64_t size = 0;
-      for (size_t j = 0; j < plane_num; ++j) {
-        size += pixel_fmt_info_->GetPlaneSize(stride, height, j);
-      }
-      void* mlu_ptr = nullptr;
-      CALL_CNRT_FUNC(cnrtMalloc(reinterpret_cast<void**>(&mlu_ptr), size),
-                    "Malloc decode output buffer failed");
-      memory_pool_map_[outputBufNum + i] = mlu_ptr;
-      memory_ids_.Push(outputBufNum + i);
-    }
-    yuv_cpu_data_ = new uint8_t[stride * height * 3 / 2];
-    bgr_cpu_data_ = new uint8_t[width * height * 3];
-    tjinstance_ = tjInitDecompress();
-#endif
+  memset(&jparams_, 0, sizeof(cnjpegDecCreateInfo));
+  jparams_.deviceId = attr.dev_id;
+  jparams_.instance = CNJPEGDEC_INSTANCE_AUTO;
+  jparams_.pixelFmt = pixel_fmt_info_->cncodec_fmt;
+  jparams_.colorSpace = ColorStdCast(attr.color_std);
+  jparams_.width = attr.frame_geometry.w;
+  jparams_.height = attr.frame_geometry.h;
+  jparams_.inputBufNum = attr.input_buffer_num;
+  jparams_.outputBufNum = attr.output_buffer_num;
+  jparams_.bitDepthMinus8 = 0;
+  jparams_.allocType = CNCODEC_BUF_ALLOC_LIB;
+  jparams_.userContext = reinterpret_cast<void*>(this);
+  jparams_.suggestedLibAllocBitStrmBufSize = (4U << 20);
+  jparams_.enablePreparse = 0;
+  if (!attr.silent) {
+    PrintCreateAttr(&jparams_);
+  }
+  int ecode = cnjpegDecCreate(&handle_, CNJPEGDEC_RUN_MODE_ASYNC, &EventHandler, &jparams_);
+  if (0 != ecode) {
+    THROW_EXCEPTION(Exception::INIT_FAILED, "Create jpeg decode failed: " + to_string(ecode));
+  }
 }
 
 void DecodeHandler::InitVideoDecode(const EasyDecode::Attr& attr) {
@@ -621,10 +487,10 @@ int DecodeHandler::ReceiveSequence(cnvideoDecSequenceInfo* info) {
 void DecodeHandler::ReceiveEOS() {
   LOGI(DECODE) << "Thread id: " << std::this_thread::get_id() << ",Received EOS from cncodec";
 
+  status_.store(EasyDecode::Status::EOS);
   if (attr_.eos_callback) {
     attr_.eos_callback();
   }
-  status_.store(EasyDecode::Status::EOS);
 
   unique_lock<mutex> eos_lk(eos_mtx_);
   got_eos_ = true;
@@ -633,64 +499,37 @@ void DecodeHandler::ReceiveEOS() {
 
 #ifdef ENABLE_TURBOJPEG
 void DecodeHandler::DecodeProgressiveJpeg(const CnPacket& packet) {
-  int jpegSubsamp, width, height;
-  tjDecompressHeader2(tjinstance_, reinterpret_cast<uint8_t*>(packet.data), packet.length, &width, &height,
-                      &jpegSubsamp);
-  tjDecompress2(tjinstance_, reinterpret_cast<uint8_t*>(packet.data), packet.length, bgr_cpu_data_, width, 0 /*pitch*/,
-                height, TJPF_RGB, TJFLAG_FASTDCT);
-  int y_stride = ALIGN(width, 128);
-  int uv_stride = ALIGN(width, 128);
-  uint64_t data_length = height * y_stride * 3 / 2;
-  if (jparams_.pixelFmt == CNCODEC_PIX_FMT_NV21) {
-    detail::BGRToNV21(bgr_cpu_data_, yuv_cpu_data_, y_stride, yuv_cpu_data_ + height * y_stride, uv_stride, width,
-                      height);
-  } else if (jparams_.pixelFmt == CNCODEC_PIX_FMT_NV12) {
-    detail::BGRToNV12(bgr_cpu_data_, yuv_cpu_data_, y_stride, yuv_cpu_data_ + height * y_stride, uv_stride, width,
-                      height);
-  } else {
-    THROW_EXCEPTION(Exception::UNSUPPORTED, "Not support output type.");
+  if (!progressive_jpeg_decoder_) {
+    const size_t stride = ALIGN(attr_.frame_geometry.w, 128);
+    progressive_jpeg_decoder_.reset(new ProgressiveJpegDecoder(attr_.frame_geometry.w, attr_.frame_geometry.h, stride,
+                                                               jparams_.outputBufNum, attr_.pixel_format,
+                                                               attr_.dev_id));
   }
-
-  size_t buf_id;
-  memory_ids_.TryPop(buf_id);  // get one available buffer
-  void* mlu_ptr = memory_pool_map_[buf_id];
-  cnrtMemcpy(mlu_ptr, yuv_cpu_data_, data_length, CNRT_MEM_TRANS_DIR_HOST2DEV);
-
-  // 2. config CnFrame for user callback.
-  CnFrame finfo;
-  finfo.pts = packet.pts;
-  finfo.cpu_decode = true;
-  finfo.device_id = attr_.dev_id;
-  finfo.buf_id = buf_id;
-  finfo.width = width;
-  finfo.height = height;
-  finfo.n_planes = 2;
-  finfo.frame_size = height * y_stride * 3 / 2;
-  finfo.strides[0] = y_stride;
-  finfo.strides[1] = uv_stride;
-  finfo.ptrs[0] = mlu_ptr;
-  finfo.ptrs[1] = reinterpret_cast<void*>(reinterpret_cast<uint8_t*>(mlu_ptr) + height * y_stride);
-  finfo.pformat = attr_.pixel_format;
-  finfo.color_std = attr_.color_std;
-
-  LOGT(DECODE) << "Frame: width " << finfo.width << " height " << finfo.height << " planes " << finfo.n_planes
-               << " frame size " << finfo.frame_size;
+  CnFrame finfo = progressive_jpeg_decoder_->Decode(packet);
   if (NULL != attr_.frame_callback) {
     LOGD(DECODE) << "Add decode buffer Reference " << finfo.buf_id;
     attr_.frame_callback(finfo);
   }
 }
-
-bool DecodeHandler::ReleaseBuffer(size_t buf_id) {
-  memory_ids_.Push(buf_id);
-  return true;
-}
-
 #else
 void DecodeHandler::DecodeProgressiveJpeg(const CnPacket& packet) {
   THROW_EXCEPTION(Exception::UNSUPPORTED, "Unsupport decode progressive JPEG");
 }
 #endif
+
+void DecodeHandler::ReleaseBuffer(uint64_t buf_id) {
+  if (jpeg_decode_) {
+    bool is_progressive = false;
+#ifdef ENABLE_TURBOJPEG
+    is_progressive = progressive_jpeg_decoder_ && progressive_jpeg_decoder_->ReleaseBuffer(buf_id);
+#endif
+    if (!is_progressive) {
+      cnjpegDecReleaseReference(handle_, reinterpret_cast<cncodecFrame*>(buf_id));
+    }
+  } else {
+    cnvideoDecReleaseReference(handle_, reinterpret_cast<cncodecFrame*>(buf_id));
+  }
+}
 
 void DecodeHandler::FeedVideoData(const CnPacket& packet, bool integral_frame) {
   cnvideoDecInput input;
@@ -886,32 +725,9 @@ bool EasyDecode::FeedData(const CnPacket& packet, bool integral_frame) {
 
 bool EasyDecode::FeedEos() { return handler_->FeedEos(); }
 
-bool EasyDecode::SendData(const CnPacket& packet, bool eos, bool integral_frame) {
-  if (packet.length > 0 && packet.data) {
-    if (!FeedData(packet, integral_frame)) return false;
-  } else if (!eos) {
-    LOGE(DECODE) << "Packet do not have data. The packet will not be sent.";
-    return false;
-  }
-
-  return eos ? handler_->FeedEos() : true;
-}
-
 void EasyDecode::ReleaseBuffer(uint64_t buf_id) {
   LOGD(DECODE) << "Release decode buffer reference " << buf_id;
-  if (handler_->jpeg_decode_) {
-#ifdef ENABLE_TURBOJPEG
-    if (handler_->memory_pool_map_.find(buf_id) != handler_->memory_pool_map_.end()) {
-      handler_->ReleaseBuffer(buf_id);
-    } else {
-      cnjpegDecReleaseReference(handler_->handle_, reinterpret_cast<cncodecFrame*>(buf_id));
-    }
-#else
-    cnjpegDecReleaseReference(handler_->handle_, reinterpret_cast<cncodecFrame*>(buf_id));
-#endif
-  } else {
-    cnvideoDecReleaseReference(handler_->handle_, reinterpret_cast<cncodecFrame*>(buf_id));
-  }
+  handler_->ReleaseBuffer(buf_id);
 }
 
 bool EasyDecode::CopyFrameD2H(void* dst, const CnFrame& frame) {
@@ -920,20 +736,13 @@ bool EasyDecode::CopyFrameD2H(void* dst, const CnFrame& frame) {
     return false;
   }
   auto odata = reinterpret_cast<uint8_t*>(dst);
-  cncodecPixelFormat pixel_fmt;
-  if (handler_->jpeg_decode_) {
-    pixel_fmt = handler_->jparams_.pixelFmt;
-  } else {
-    pixel_fmt = handler_->vparams_.pixelFmt;
-  }
-
   LOGT(DECODE) << "Copy codec frame from device to host";
   LOGT(DECODE) << "device address: (plane 0) " << frame.ptrs[0] << ", (plane 1) " << frame.ptrs[1];
   LOGT(DECODE) << "host address: " << reinterpret_cast<int64_t>(odata);
 
-  switch (pixel_fmt) {
-    case CNCODEC_PIX_FMT_NV21:
-    case CNCODEC_PIX_FMT_NV12: {
+  switch (frame.pformat) {
+    case PixelFmt::NV21:
+    case PixelFmt::NV12: {
       size_t len_y = frame.strides[0] * frame.height;
       size_t len_uv = frame.strides[1] * frame.height / 2;
       CALL_CNRT_FUNC(cnrtMemcpy(reinterpret_cast<void*>(odata), frame.ptrs[0], len_y, CNRT_MEM_TRANS_DIR_DEV2HOST),
@@ -943,7 +752,7 @@ bool EasyDecode::CopyFrameD2H(void* dst, const CnFrame& frame) {
           "Decode copy frame plane chroma failed.");
       break;
     }
-    case CNCODEC_PIX_FMT_I420: {
+    case PixelFmt::I420: {
       size_t len_y = frame.strides[0] * frame.height;
       size_t len_u = frame.strides[1] * frame.height / 2;
       size_t len_v = frame.strides[2] * frame.height / 2;
@@ -958,7 +767,7 @@ bool EasyDecode::CopyFrameD2H(void* dst, const CnFrame& frame) {
       break;
     }
     default:
-      LOGE(DECODE) << "don't support format: " << pixel_fmt;
+      LOGE(DECODE) << "don't support format: " << static_cast<int>(frame.pformat);
       break;
   }
 
