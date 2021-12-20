@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "device/mlu_context.h"
+#include "internal/cnrt_wrap.h"
 
 namespace edk {
 
@@ -37,13 +38,13 @@ namespace edk {
   do {                                                                                                       \
     cnrtRet_t ret = (func);                                                                                  \
     if (CNRT_RET_SUCCESS != ret) {                                                                           \
-      THROW_EXCEPTION(Exception::INTERNAL, std::string(msg) + ", cnrt error code : " + std::to_string(ret)); \
+      THROW_EXCEPTION(edk::Exception::INTERNAL, std::string(msg) + ", cnrt error code : " + std::to_string(ret)); \
     }                                                                                                        \
   } while (0)
 
 class TimeMark {
  public:
-  TimeMark() { CALL_CNRT_FUNC(cnrtCreateNotifier(&base_), "Create notifier failed"); }
+  TimeMark() { CALL_CNRT_FUNC(cnrt::NotifierCreate(&base_), "Create notifier failed"); }
 
   TimeMark(TimeMark&& other) : base_(other.base_) { other.base_ = nullptr; }
 
@@ -54,10 +55,13 @@ class TimeMark {
   }
 
   ~TimeMark() {
-    if (nullptr != base_) cnrtDestroyNotifier(&base_);
+    if (nullptr != base_) {
+      cnrt::NotifierDestroy(base_);
+      base_ = nullptr;
+    }
   }
 
-  void Mark(cnrtQueue_t queue) { CALL_CNRT_FUNC(cnrtPlaceNotifier(base_, queue), "cnrtPlaceNotifier failed"); }
+  void Mark(cnrtQueue_t queue) { CALL_CNRT_FUNC(cnrt::PlaceNotifier(base_, queue), "cnrt::PlaceNotifier failed"); }
 
   void Mark(MluTaskQueue_t queue);
 
@@ -66,7 +70,7 @@ class TimeMark {
   // get hardware time in ms
   static float Count(const TimeMark& start, const TimeMark& end) {
     float dura;
-    CALL_CNRT_FUNC(cnrtNotifierDuration(start.base_, end.base_, &dura), "Calculate elapsed time failed.");
+    CALL_CNRT_FUNC(cnrt::NotifierDuration(start.base_, end.base_, &dura), "Calculate elapsed time failed.");
     dura /= 1000;
     return dura;
   }
@@ -78,6 +82,15 @@ class TimeMark {
 };
 
 struct MluTaskQueuePrivate {
+  MluTaskQueuePrivate() {
+    constexpr uint32_t init_mark_num = 2;
+    marks.reserve(init_mark_num * 2);
+    marks_valid.reserve(init_mark_num * 2);
+    for (uint32_t cnt = 0; cnt < init_mark_num; ++cnt) {
+      marks.emplace_back();
+      marks_valid.push_back(true);
+    }
+  }
   ~MluTaskQueuePrivate();
   cnrtQueue_t queue = nullptr;
   std::vector<TimeMark> marks;

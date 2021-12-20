@@ -30,6 +30,13 @@
 #include "easyinfer/mlu_memory_op.h"
 #include "easyinfer/model_loader.h"
 
+enum
+{
+  PROP_0,
+  PROP_DEVICE_ID,
+};
+static constexpr gint DEFAULT_DEVICE_ID = -1;
+
 GST_DEBUG_CATEGORY_EXTERN(gst_cambricon_debug);
 #define GST_CAT_DEFAULT gst_cambricon_debug
 
@@ -40,7 +47,8 @@ static GstStaticPadTemplate sink_factory =
   GST_STATIC_PAD_TEMPLATE("sink",
                           GST_PAD_SINK,
                           GST_PAD_ALWAYS,
-                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, I420};"));
+                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, I420};"
+                                          "video/x-raw, format={NV12, NV21, I420}"));
 
 static GstStaticPadTemplate src_factory =
   GST_STATIC_PAD_TEMPLATE("src",
@@ -56,10 +64,10 @@ struct GstCnconvertPrivate
   GstVideoInfo src_info;
   GstSyncedMemory_t mlu_dst_mem;
   gint device_id;
-  gboolean keep_on_mlu;
+  gboolean input_on_mlu;
+  gboolean output_on_mlu;
   gboolean disable_resize;
   gboolean disable_convert;
-  gboolean pass_through;
 };
 
 G_DEFINE_TYPE_WITH_PRIVATE(GstCnconvert, gst_cnconvert, GST_TYPE_ELEMENT);
@@ -109,6 +117,11 @@ gst_cnconvert_class_init(GstCnconvertClass* klass)
   gobject_class->get_property = gst_cnconvert_get_property;
   gobject_class->finalize = gst_cnconvert_finalize;
 
+  g_object_class_install_property(gobject_class, PROP_DEVICE_ID,
+                                  g_param_spec_int("device-id", "device id", "device identification", -1, 10,
+                                                   DEFAULT_DEVICE_ID,
+                                                   (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   gst_element_class_set_details_simple(gstelement_class, "cnconvert", "Generic/Convertor", "Cambricon convertor",
                                        "Cambricon Solution SDK");
 
@@ -155,7 +168,11 @@ gst_cnconvert_finalize(GObject* object)
 static void
 gst_cnconvert_set_property(GObject* object, guint prop_id, const GValue* value, GParamSpec* pspec)
 {
+  GstCnconvertPrivate* priv = gst_cnconvert_get_private(GST_CNCONVERT(object));
   switch (prop_id) {
+    case PROP_DEVICE_ID:
+      priv->device_id = g_value_get_int(value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
       break;
@@ -165,7 +182,11 @@ gst_cnconvert_set_property(GObject* object, guint prop_id, const GValue* value, 
 static void
 gst_cnconvert_get_property(GObject* object, guint prop_id, GValue* value, GParamSpec* pspec)
 {
+  GstCnconvertPrivate* priv = gst_cnconvert_get_private(GST_CNCONVERT(object));
   switch (prop_id) {
+    case PROP_DEVICE_ID:
+      g_value_set_int(value, priv->device_id);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
       break;
@@ -334,7 +355,7 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
 {
   GstMemory* mem = nullptr;
   thread_local GstMapInfo info;
-  thread_local edk::MluMemoryOp mem_op;
+  using mem_op = edk::MluMemoryOp;
 
   GST_DEBUG_OBJECT(self, "transform from device(MLU) memory to host memory");
 
@@ -350,17 +371,17 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
 
   // copy data from device to host
   if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV21) {
-    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
-    mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height, cn_syncedmem_get_mutable_dev_data(frame->data[1]),
+    mem_op::MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
+    mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height, cn_syncedmem_get_mutable_dev_data(frame->data[1]),
                      (frame->stride[1] * frame->height) >> 1);
   } else if (fmt == GST_VIDEO_FORMAT_I420) {
-    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
-    mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height, cn_syncedmem_get_mutable_dev_data(frame->data[1]),
+    mem_op::MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
+    mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height, cn_syncedmem_get_mutable_dev_data(frame->data[1]),
                      (frame->stride[1] * frame->height) >> 1);
-    mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height + (frame->stride[1] * frame->height >> 1), cn_syncedmem_get_mutable_dev_data(frame->data[2]),
+    mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height + (frame->stride[1] * frame->height >> 1), cn_syncedmem_get_mutable_dev_data(frame->data[2]),
                      (frame->stride[2] * frame->height) >> 1);
   } else {
-    mem_op.MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height * 4);
+    mem_op::MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height * 4);
   }
 
   GST_DEBUG_OBJECT(self, "stride = %d, width = %d\n", frame->stride[0], frame->width);
@@ -389,24 +410,86 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
   return buffer;
 }
 
+template<typename Callable>
+class ScopeGuard {
+ public:
+  explicit ScopeGuard(Callable&& c) : c_(std::forward<Callable>(c)) {}
+  ~ScopeGuard() { c_(); }
+ private:
+  Callable c_;
+};
+
+static gboolean
+transform_to_mlu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, GstVideoFormat fmt) {
+  if (fmt != GST_VIDEO_FORMAT_NV12 && fmt != GST_VIDEO_FORMAT_NV21) {
+    GST_ERROR_OBJECT(self, "unsupported pixel format!");
+    return FALSE;
+  }
+
+  GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
+  using mem_op = edk::MluMemoryOp;
+  GstVideoFrame host_frame;
+
+  g_return_val_if_fail(gst_video_frame_map(&host_frame, &priv->sink_info, buffer, GST_MAP_READ), FALSE);
+  auto unmap_func = [&host_frame]() { gst_video_frame_unmap(&host_frame); };
+  ScopeGuard<decltype(unmap_func)> map_guard(std::move(unmap_func));
+  GST_DEBUG_OBJECT(self, "transform from host memory to device(MLU) memory");
+  frame->width = host_frame.info.width;
+  frame->height = host_frame.info.height;
+  frame->n_planes = 2;
+  frame->device_id = priv->device_id;
+
+  frame->stride[0] = host_frame.info.stride[0];
+  frame->stride[1] = host_frame.info.stride[1];
+  size_t y_len = frame->height * frame->stride[0];
+  size_t uv_len = frame->height * frame->stride[1] >> 1;
+  frame->data[0] = cn_syncedmem_new(y_len);
+  frame->data[1] = cn_syncedmem_new(uv_len);
+  mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[0]), host_frame.data[0], y_len);
+  mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[1]), host_frame.data[1], uv_len);
+  return TRUE;
+}
+
 static GstFlowReturn
 gst_cnconvert_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer)
 {
   GstCnconvert* self = GST_CNCONVERT(parent);
   GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
-  auto meta = gst_buffer_get_mlu_memory_meta(buffer);
 
-  if (!meta || !meta->frame) {
-    GST_CNCONVERT_ERROR(self, RESOURCE, READ, ("get meta failed"));
+  gboolean pass_through = priv->disable_resize && priv->disable_convert && (priv->output_on_mlu == priv->input_on_mlu);
+  if (pass_through) {
+    GST_DEBUG_OBJECT(self, "pass through");
+    gst_pad_push(self->srcpad, buffer);
+    return GST_FLOW_OK;
   }
 
-  GstMluFrame_t frame = meta->frame;
-  // set mlu environment
   thread_local bool cnrt_env = false;
-  if (!cnrt_env) {
-    priv->device_id = frame->device_id;
-    g_return_val_if_fail(set_cnrt_env(GST_ELEMENT(self), priv->device_id), GST_FLOW_ERROR);
-    cnrt_env = true;
+  GstMluFrame_t frame = nullptr;
+  MluMemoryMeta_t meta = nullptr;
+  if (priv->input_on_mlu) {
+    meta = gst_buffer_get_mlu_memory_meta(buffer);
+
+    if (!meta || !meta->frame) {
+      GST_CNCONVERT_ERROR(self, RESOURCE, READ, ("get meta failed"));
+    }
+
+    frame = meta->frame;
+    // set mlu environment
+    if (!cnrt_env) {
+      priv->device_id = priv->device_id == -1 ? frame->device_id : priv->device_id;
+      g_return_val_if_fail(priv->device_id == frame->device_id, GST_FLOW_ERROR);
+      g_return_val_if_fail(set_cnrt_env(GST_ELEMENT(self), priv->device_id), GST_FLOW_ERROR);
+      cnrt_env = true;
+    }
+  } else {
+    if (!cnrt_env) {
+      g_return_val_if_fail(priv->device_id != -1, GST_FLOW_ERROR);
+      g_return_val_if_fail(set_cnrt_env(GST_ELEMENT(self), priv->device_id), GST_FLOW_ERROR);
+      cnrt_env = true;
+    }
+    frame = gst_mlu_frame_new();
+    g_return_val_if_fail(transform_to_mlu(self, buffer, frame, priv->sink_info.finfo->format), GST_FLOW_ERROR);
+    meta = gst_buffer_add_mlu_memory_meta(buffer, frame, "convert");
   }
 
   // process
@@ -438,7 +521,7 @@ gst_cnconvert_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer)
     frame->n_planes = 1;
   }
 
-  if (!priv->keep_on_mlu) {
+  if (!priv->output_on_mlu) {
     // copyout
     try {
       buffer = transform_to_cpu(self, buffer, frame, priv->src_info.finfo->format);
@@ -461,6 +544,12 @@ gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps)
 
   // get information from sink caps
   g_return_val_if_fail(gst_video_info_from_caps(&priv->sink_info, sinkcaps), FALSE);
+
+  {
+    auto feat_str = gst_caps_features_to_string(gst_caps_get_features(sinkcaps, 0));
+    priv->input_on_mlu = g_strcmp0(feat_str, GST_CAPS_FEATURE_MEMORY_MLU) == 0;
+    g_free(feat_str);
+  }
 
   // config src caps
   switch (priv->sink_info.finfo->format) {
@@ -524,13 +613,12 @@ gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps)
   } else {
     // get information from src caps
     auto feat_str = gst_caps_features_to_string(gst_caps_get_features(src_peer_caps, 0));
-    priv->keep_on_mlu = g_strcmp0(feat_str, GST_CAPS_FEATURE_MEMORY_MLU) == 0;
+    priv->output_on_mlu = g_strcmp0(feat_str, GST_CAPS_FEATURE_MEMORY_MLU) == 0;
     g_free(feat_str);
 
     priv->disable_resize =
       priv->sink_info.width == priv->src_info.width && priv->sink_info.height == priv->src_info.height;
     priv->disable_convert = priv->sink_info.finfo->format == priv->src_info.finfo->format;
-    priv->pass_through = priv->disable_resize && priv->disable_convert && priv->keep_on_mlu;
     if (priv->disable_convert && !priv->disable_resize) {
       GST_ERROR_OBJECT(self, "this version do not support resize without convert");
     }

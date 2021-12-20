@@ -23,7 +23,7 @@
 
 #include "cnrt.h"
 
-typedef unsigned short half;
+typedef unsigned int16_t half;
 
 struct KCFHandle {
   half* dft_mat;

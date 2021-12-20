@@ -144,7 +144,7 @@ void **MluMemoryOp::AllocCpuInput() const {
   for (uint32_t i = 0; i < num; ++i) {
     auto &shape = model_->InputShape(i);
     uint64_t data_size = shape.BatchDataCount();
-    LOGT(MEMORY) << "Alloc CPU input memory (" << i << ") on CPU in " << data_size << " bytes";
+    LOGT(MEMORY) << "Alloc CPU input memory (" << i << ") on CPU in " << data_size * sizeof(float) << " bytes";
     ret[i] = reinterpret_cast<void *>(new float[data_size]);
   }
   return ret;
@@ -161,7 +161,7 @@ void **MluMemoryOp::AllocCpuOutput() const {
   for (uint32_t i = 0; i < num; ++i) {
     auto &shape = model_->OutputShape(i);
     uint64_t data_size = shape.BatchDataCount();
-    LOGT(MEMORY) << "Alloc output memory (" << i << ") on CPU in " << data_size << " bytes";
+    LOGT(MEMORY) << "Alloc output memory (" << i << ") on CPU in " << data_size * sizeof(float) << " bytes";
     ret[i] = reinterpret_cast<void *>(new float[data_size]);
   }
   return ret;
@@ -209,7 +209,7 @@ void **MluMemoryOp::AllocMluOutput() const {
   return ret;
 }
 
-void *MluMemoryOp::AllocMlu(size_t nBytes) const {
+void *MluMemoryOp::AllocMlu(size_t nBytes) {
   void *ret = nullptr;
   cnrtRet_t error_code;
   LOGT(MEMORY) << "Alloc memory on MLU in " << nBytes << " bytes";
@@ -264,7 +264,7 @@ void MluMemoryOp::FreeMluOutput(void **ptr) const {
   delete[] ptr;
 }
 
-void MluMemoryOp::FreeMlu(void *ptr) const {
+void MluMemoryOp::FreeMlu(void *ptr) {
   LOGT(MEMORY) << "Free memory on MLU";
   cnrtRet_t ret = cnrtFree(ptr);
   if (ret != CNRT_RET_SUCCESS) {
@@ -325,21 +325,21 @@ void MluMemoryOp::MemcpyOutputD2H(void **cpu_dst, void **mlu_src) const {
   }
 }
 
-void MluMemoryOp::MemcpyH2D(void *mlu_dst, void *cpu_src, size_t nBytes) const {
+void MluMemoryOp::MemcpyH2D(void *mlu_dst, void *cpu_src, size_t nBytes) {
   cnrtRet_t error_code;
   LOGA(MEMORY) << "copy memory from host to device in size " << nBytes << ", dst: " << mlu_dst << ", src: " << cpu_src;
   error_code = cnrtMemcpy(mlu_dst, cpu_src, nBytes, CNRT_MEM_TRANS_DIR_HOST2DEV);
   CHECK_CNRT_RET(error_code, "Memcpy host to device failed.");
 }
 
-void MluMemoryOp::MemcpyD2H(void *cpu_dst, void *mlu_src, size_t nBytes) const {
+void MluMemoryOp::MemcpyD2H(void *cpu_dst, void *mlu_src, size_t nBytes) {
   cnrtRet_t error_code;
   LOGA(MEMORY) << "copy memory from device to host in size " << nBytes << ", dst: " << cpu_dst << ", src: " << mlu_src;
   error_code = cnrtMemcpy(cpu_dst, mlu_src, nBytes, CNRT_MEM_TRANS_DIR_DEV2HOST);
   CHECK_CNRT_RET(error_code, "Memcpy host to device failed.");
 }
 
-void MluMemoryOp::MemcpyD2D(void *mlu_dst, void *mlu_src, size_t nBytes) const {
+void MluMemoryOp::MemcpyD2D(void *mlu_dst, void *mlu_src, size_t nBytes) {
   cnrtRet_t error_code;
   LOGA(MEMORY) << "copy memory from device to device in size " << nBytes << ", dst: " << mlu_dst
                << ", src: " << mlu_src;

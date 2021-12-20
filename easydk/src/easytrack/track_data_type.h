@@ -57,12 +57,22 @@ enum class TrackState { TENTATIVE, CONFIRMED, DELETED };
 
 using MatchData = std::pair<int, int>;
 
-using CostMatrix = std::vector<std::vector<float>>;
+struct Feature {
+  Feature(const std::vector<float>& _vec, float _mold) : vec(_vec), mold(_mold) {}
+  std::vector<float> vec;
+  mutable float mold;
+  Feature() = delete;
+};
 
 struct MatchResult {
   std::vector<MatchData> matches;
   std::vector<int> unmatched_tracks;
   std::vector<int> unmatched_detections;
+  void Clean() {
+    matches.clear();
+    unmatched_tracks.clear();
+    unmatched_detections.clear();
+  }
 };
 
 }  // namespace edk

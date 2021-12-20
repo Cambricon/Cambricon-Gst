@@ -29,6 +29,7 @@
 
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cxxutil/exception.h"
@@ -43,11 +44,7 @@ namespace edk {
 template <typename Object>
 class MatrixPrototype {
  public:
-  /**
-   * Constructor, initialized as empty matrix
-   * @param None
-   */
-  MatrixPrototype() : arrays_(0) {}
+  using underlying_type = vector<Object>;
 
   /**
    * Constructor.
@@ -55,17 +52,27 @@ class MatrixPrototype {
    * @param rows[in] Number of rows in a 2D array.
    * @param cols[in] Number of columns in a 2D array.
    */
-  MatrixPrototype(int rows, int cols) : arrays_(rows) {
-    for (int i = 0; i < rows; ++i) {
-      arrays_[i].resize(cols);
+  MatrixPrototype(uint32_t rows, uint32_t cols) : arrays_(rows * cols), rows_(rows), cols_(cols) {}
+
+  MatrixPrototype() = default;
+  MatrixPrototype(const MatrixPrototype<Object>& m) = default;
+  MatrixPrototype(MatrixPrototype<Object>&& m) = default;
+  MatrixPrototype& operator=(const MatrixPrototype<Object>& m) = default;
+  MatrixPrototype& operator=(MatrixPrototype<Object>&& m) = default;
+
+  MatrixPrototype(const underlying_type& init_list, uint32_t rows, uint32_t cols)
+      : arrays_(init_list), rows_(rows), cols_(cols) {
+    if (arrays_.size() != rows_ * cols_) {
+      THROW_EXCEPTION(Exception::INVALID_ARG, "matrix size mismatch with rows and cols");
     }
   }
 
-  /**
-   * Copy constructor.
-   * @param m[in] Another matrix that is assigned to the constructed matrix.
-   */
-  MatrixPrototype(const MatrixPrototype<Object>& m) { *this = m; }
+  MatrixPrototype(underlying_type&& init_list, uint32_t rows, uint32_t cols)
+      : arrays_(std::forward<underlying_type>(init_list)), rows_(rows), cols_(cols) {
+    if (arrays_.size() != rows_ * cols_) {
+      THROW_EXCEPTION(Exception::INVALID_ARG, "matrix size mismatch with rows and cols");
+    }
+  }
 
   /**
    * Resize matrix to specified new shape.
@@ -74,7 +81,7 @@ class MatrixPrototype {
    * @param cols[in] Number of columns in a 2D array.
    * @return None
    */
-  void Resize(int rows, int cols);
+  void Resize(uint32_t rows, uint32_t cols);
 
   /**
    * @brief Fill all elements with given value
@@ -84,74 +91,74 @@ class MatrixPrototype {
   void Fill(const Object& element) {
     if (Empty()) return;
 
-    for (auto& array : arrays_) {
-      array.assign(Cols(), element);
-    }
+    arrays_.assign(Size(), element);
+  }
+
+  /**
+   * Get number of elements from matrix.
+   * @return Number of elements.
+   */
+  uint32_t Size() const {
+    return cols_ * rows_;
   }
 
   /**
    * Get number of rows from matrix.
    * @return Number of rows.
    */
-  int Rows() const { return arrays_.size(); }
+  uint32_t Rows() const { return rows_; }
 
   /**
    * Get number of columns from matrix.
    * @return Number of columns.
    */
-  int Cols() const { return Rows() ? (arrays_[0].size()) : 0; }
+  uint32_t Cols() const { return cols_; }
 
   /**
    * Query whether matrix is empty.
    * @return Returns true if the array has no elements.
    */
-  bool Empty() const { return Rows() * Cols() == 0; }
+  bool Empty() const { return Size() == 0; }
 
   /**
    * Query whether matrix is square.
    * @return Returns true if not empty and number of columns equal to number of rows.
    */
-  bool Square() const { return (!(Empty()) && Rows() == Cols()); }
+  bool Square() const { return (!(Empty()) && rows_ == cols_); }
 
   /**
    * Access vector of const elements at specified row number.
    * @param row[in] Accessed row number
+   * @param col[in] Accessed col number
    * @return Specified row elements.
    */
-  const vector<Object>& operator[](int row) const { return arrays_[row]; }
+  const Object& operator()(uint32_t row, uint32_t col) const { return arrays_[row * cols_ + col]; }
 
   /**
    * Access vector of elements at specified row number.
    * @param row[in] Accessed row number
+   * @param col[in] Accessed col number
    * @return Specified row elements.
    */
-  vector<Object>& operator[](int row) { return arrays_[row]; }
+  Object& operator()(uint32_t row, uint32_t col) { return arrays_[row * cols_ + col]; }
 
  protected:
-  vector<vector<Object>> arrays_;
+  const Object& operator[](uint32_t idx) const { return arrays_[idx]; }
+  Object& operator[](uint32_t idx) { return arrays_[idx]; }
+
+  vector<Object> arrays_;
+  uint32_t rows_{0};
+  uint32_t cols_{0};
 };
 
 template <typename Object>
-void MatrixPrototype<Object>::Resize(int rows, int cols) {
-  int rs = this->Rows();
-  int cs = this->Cols();
-  if (rows == rs && cols == cs) {
+void MatrixPrototype<Object>::Resize(uint32_t rows, uint32_t cols) {
+  if (rows == rows_ && cols == cols_) {
     return;
-  } else if (rows == rs && cols != cs) {
-    for (int i = 0; i < rows; ++i) {
-      arrays_[i].resize(cols);
-    }
-  } else if (rows != rs && cols == cs) {
-    arrays_.resize(rows);
-    for (int i = rs; i < rows; ++i) {
-      arrays_[i].resize(cols);
-    }
-  } else {
-    arrays_.resize(rows);
-    for (int i = 0; i < rows; ++i) {
-      arrays_[i].resize(cols);
-    }
   }
+  rows_ = rows;
+  cols_ = cols;
+  arrays_.resize(Size());
 }
 
 /**
@@ -159,6 +166,7 @@ void MatrixPrototype<Object>::Resize(int rows, int cols) {
  */
 class Matrix : public MatrixPrototype<float> {
  public:
+  using underlying_type = MatrixPrototype<float>::underlying_type;
   /**
    * Constructor, initialized as empty matrix
    */
@@ -170,19 +178,22 @@ class Matrix : public MatrixPrototype<float> {
    * @param rows[in] Number of rows in a 2D array.
    * @param cols[in] Number of columns in a 2D array.
    */
-  Matrix(int rows, int cols) : MatrixPrototype<float>(rows, cols) {
-    for (int i = 0; i < rows; ++i) {
-      arrays_[i].assign(cols, 0);
-    }
+  Matrix(uint32_t rows, uint32_t cols) : MatrixPrototype<float>(rows, cols) {
+    arrays_.assign(Size(), 0.f);
   }
 
-  /**
-   * Copy constructor.
-   * @param m[in] Another matrix that is assigned to the constructed matrix.
-   */
+  Matrix(const underlying_type& init_list, uint32_t rows, uint32_t cols)
+      : MatrixPrototype<float>(init_list, rows, cols) {
+  }
+
+  Matrix(underlying_type&& init_list, uint32_t rows, uint32_t cols)
+      : MatrixPrototype<float>(std::forward<underlying_type>(init_list), rows, cols) {
+  }
+
   Matrix(const Matrix& m) = default;
   Matrix& operator=(const Matrix& m) = default;
-
+  Matrix(Matrix&& m) = default;
+  Matrix& operator=(Matrix&& m) = default;
   /**
    * Destructor.
    * @brief Release resourse.
@@ -193,7 +204,22 @@ class Matrix : public MatrixPrototype<float> {
    * Assignment operator with initializer_list.
    * @param init_list[in] Arrays to be assigned to matrix.
    */
-  const Matrix& operator=(vector<vector<float>> init_list);
+  Matrix& operator=(const underlying_type& init_list) {
+    if (init_list.size() != Size()) {
+      THROW_EXCEPTION(Exception::INVALID_ARG, "matrix size mismatch with rows and cols");
+    }
+    arrays_ = init_list;
+    return *this;
+  }
+
+  Matrix& operator=(underlying_type&& init_list) {
+    if (init_list.size() != Size()) {
+      std::cout << "list_size: " << init_list.size() << " | matrix size: " << Size() << std::endl;
+      THROW_EXCEPTION(Exception::INVALID_ARG, "matrix size mismatch with rows and cols");
+    }
+    arrays_ = std::move(init_list);
+    return *this;
+  }
 
   /**
    * Overload add assignment operator, implement matrix addition.
@@ -210,24 +236,17 @@ class Matrix : public MatrixPrototype<float> {
   const Matrix& operator-=(const Matrix& m);
 
   /**
-   * Overload multiply assignment operator, implement matrix multiplication.
-   * @param m[in] Multiply operand
-   * @return Multiplication result
-   */
-  const Matrix& operator*=(const Matrix& m);
-
-  /**
    * Solve Matrix inversion.
    * @return Return inverse of matrix.
    * @attention Solve inverse of non-zero singular matrix may cause an error
    */
-  const Matrix Inv() const;
+  Matrix Inv() const;
 
   /**
    * Solve Matrix transposition.
    * @return Return transposed matrix
    */
-  const Matrix Trans() const;
+  Matrix Trans() const;
 
   /**
    * Print matrix element

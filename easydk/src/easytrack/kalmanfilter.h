@@ -34,7 +34,7 @@ class KalmanFilter {
   /**
    * @brief Calculate measurement noise R
    */
-  KalHData Project(const Matrix& mean, const Matrix& covariance);
+  void Project(const Matrix& mean, const Matrix& covariance);
 
   /**
    * @brief Calculate the Kalman gain and update the state and MMSE
@@ -49,13 +49,20 @@ class KalmanFilter {
   BoundingBox GetCurPos();
 
  private:
-  Matrix motion_mat_;
-  Matrix update_mat_;
+  static const Matrix motion_mat_;
+  static const Matrix update_mat_;
+  static const Matrix motion_mat_trans_;
+  static const Matrix update_mat_trans_;
   Matrix mean_;
   Matrix covariance_;
 
+  Matrix project_mean_;
+  Matrix project_covariance_;
+
   float std_weight_position_;
   float std_weight_velocity_;
+
+  bool need_recalc_project_{true};
 };  // class KalmanFilter
 
 }  // namespace edk

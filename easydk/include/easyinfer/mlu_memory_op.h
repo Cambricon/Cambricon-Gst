@@ -86,7 +86,7 @@ class MluMemoryOp {
    * @param nBytes Alloced memory size in bytes
    * @return Alloced MLU memory
    */
-  void *AllocMlu(size_t nBytes) const;
+  static void *AllocMlu(size_t nBytes);
 
   /**
    * @brief Alloc memory on MLU for model input
@@ -143,7 +143,7 @@ class MluMemoryOp {
    *
    * @param ptr MLU memory pointer
    */
-  void FreeMlu(void *ptr) const;
+  static void FreeMlu(void *ptr);
 
   /**
    * @brief Copy model input data, from host(CPU) to device(MLU)
@@ -170,7 +170,7 @@ class MluMemoryOp {
    * @param cpu_src Copy source, data on CPU
    * @param nBytes Memory size in bytes
    */
-  void MemcpyH2D(void *mlu_dst, void *cpu_src, size_t nBytes) const;
+  static void MemcpyH2D(void *mlu_dst, void *cpu_src, size_t nBytes);
 
   /**
    * @brief Copy data from device to host
@@ -179,7 +179,7 @@ class MluMemoryOp {
    * @param mlu_src Copy source, data on MLU
    * @param nBytes Memory size in bytes
    */
-  void MemcpyD2H(void *cpu_dst, void *mlu_src, size_t nBytes) const;
+  static void MemcpyD2H(void *cpu_dst, void *mlu_src, size_t nBytes);
 
   /**
    * @brief Copy data from device to device
@@ -188,7 +188,7 @@ class MluMemoryOp {
    * @param mlu_src Copy source, data on MLU
    * @param nBytes Memory size in bytes
    */
-  void MemcpyD2D(void *mlu_dst, void *mlu_src, size_t nBytes) const;
+  static void MemcpyD2D(void *mlu_dst, void *mlu_src, size_t nBytes);
 
  private:
   std::shared_ptr<ModelLoader> model_;

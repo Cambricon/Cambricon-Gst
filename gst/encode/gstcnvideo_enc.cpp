@@ -1097,7 +1097,7 @@ gst_cnvideoenc_destroy_encoder(GstCnvideoenc* self)
 static gboolean
 copy_frame(GstCnvideoenc* self, cncodecFrame* dst, const GstVideoFrame& src)
 {
-  edk::MluMemoryOp mem_op;
+  using mem_op = edk::MluMemoryOp;
   auto priv = gst_cnvideoenc_get_private(self);
   auto frame_size = src.info.width * src.info.height;
   // cnrtRet_t cnrt_ecode = CNRT_RET_SUCCESS;
@@ -1105,18 +1105,18 @@ copy_frame(GstCnvideoenc* self, cncodecFrame* dst, const GstVideoFrame& src)
     case CNCODEC_PIX_FMT_NV12:
     case CNCODEC_PIX_FMT_NV21: {
       GST_DEBUG_OBJECT(self, "Copy frame luminance");
-      mem_op.MemcpyH2D(reinterpret_cast<void*>(dst->plane[0].addr), src.data[0], frame_size);
+      mem_op::MemcpyH2D(reinterpret_cast<void*>(dst->plane[0].addr), src.data[0], frame_size);
       GST_DEBUG_OBJECT(self, "Copy frame chroma");
-      mem_op.MemcpyH2D(reinterpret_cast<void*>(dst->plane[1].addr), src.data[1], frame_size >> 1);
+      mem_op::MemcpyH2D(reinterpret_cast<void*>(dst->plane[1].addr), src.data[1], frame_size >> 1);
       break;
     }
     case CNCODEC_PIX_FMT_I420: {
       GST_DEBUG_OBJECT(self, "Copy frame luminance");
-      mem_op.MemcpyH2D(reinterpret_cast<void*>(dst->plane[0].addr), src.data[0], frame_size);
+      mem_op::MemcpyH2D(reinterpret_cast<void*>(dst->plane[0].addr), src.data[0], frame_size);
       GST_DEBUG_OBJECT(self, "Copy frame chroma 0");
-      mem_op.MemcpyH2D(reinterpret_cast<void*>(dst->plane[1].addr), src.data[1], frame_size >> 2);
+      mem_op::MemcpyH2D(reinterpret_cast<void*>(dst->plane[1].addr), src.data[1], frame_size >> 2);
       GST_DEBUG_OBJECT(self, "Copy frame chroma 1");
-      mem_op.MemcpyH2D(reinterpret_cast<void*>(dst->plane[2].addr), src.data[2], frame_size >> 2);
+      mem_op::MemcpyH2D(reinterpret_cast<void*>(dst->plane[2].addr), src.data[2], frame_size >> 2);
       break;
     }
     case CNCODEC_PIX_FMT_ARGB:
@@ -1124,7 +1124,7 @@ copy_frame(GstCnvideoenc* self, cncodecFrame* dst, const GstVideoFrame& src)
     case CNCODEC_PIX_FMT_RGBA:
     case CNCODEC_PIX_FMT_BGRA:
       GST_DEBUG_OBJECT(self, "Copy frame RGB family");
-      mem_op.MemcpyH2D(reinterpret_cast<void*>(dst->plane[0].addr), src.data[0], frame_size << 2);
+      mem_op::MemcpyH2D(reinterpret_cast<void*>(dst->plane[0].addr), src.data[0], frame_size << 2);
       break;
     default:
       GST_CNVIDEOENC_ERROR(self, STREAM, FORMAT, ("Unsupported pixel format"));
@@ -1336,6 +1336,8 @@ handle_output(GstCnvideoenc* self, cnvideoEncOutput* packet)
   } else {
     GST_BUFFER_PTS(buffer) = packet->pts;
   }
+  cnvideoEncAddReference(priv->encode, &packet->streamBuffer);
+  cnvideoEncReleaseReference(priv->encode, &packet->streamBuffer);
   if (priv->first_frame)
     priv->first_frame = false;
 

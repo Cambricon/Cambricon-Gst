@@ -13,20 +13,26 @@
 #include "hungarian.h"
 #include <float.h>
 #include <math.h>
-#include <fstream>
-
-HungarianAlgorithm::HungarianAlgorithm() {}
-HungarianAlgorithm::~HungarianAlgorithm() {}
+#include <string.h>
 
 //********************************************************//
 // A single function wrapper for solving assignment problem.
 //********************************************************//
-float HungarianAlgorithm::Solve(const std::vector<std::vector<float>> &DistMatrix, std::vector<int> *Assignment) {
-  unsigned int nRows = DistMatrix.size();
-  unsigned int nCols = DistMatrix[0].size();
+float HungarianAlgorithm::Solve(const edk::Matrix &DistMatrix,
+                                std::vector<int> *Assignment, void* _workspace) {
+  unsigned int nRows = DistMatrix.Rows();
+  unsigned int nCols = DistMatrix.Cols();
 
-  float *distMatrixIn = new float[nRows * nCols];
-  int *assignment = new int[nRows];
+  void *buffer = _workspace ? _workspace : malloc(GetWorkspaceSize(nRows, nCols));
+  float *workspace = reinterpret_cast<float*>(buffer);
+
+  // sizeof(distMatrixIn) = nRows * nCols * sizeof(float)
+  float *distMatrixIn = workspace;
+  workspace += nRows * nCols;
+  // sizeof(assignment) = nRows * sizeof(int)
+  int *assignment = reinterpret_cast<int*>(workspace);
+  workspace += nRows;
+
   float cost = 0.0;
 
   // Fill in the distMatrixIn. Mind the index is "i + nRows * j".
@@ -37,19 +43,19 @@ float HungarianAlgorithm::Solve(const std::vector<std::vector<float>> &DistMatri
 
   for (unsigned int i = 0; i < nRows; i++) {
     for (unsigned int j = 0; j < nCols; j++) {
-      distMatrixIn[i + nRows * j] = DistMatrix[i][j];
+      distMatrixIn[i + nRows * j] = DistMatrix(i, j);
     }
   }
 
   // call solving function
-  assignmentoptimal(assignment, &cost, distMatrixIn, nRows, nCols);
+  assignmentoptimal(assignment, &cost, distMatrixIn, nRows, nCols, workspace);
   Assignment->clear();
+  Assignment->reserve(nRows);
   for (unsigned int r = 0; r < nRows; r++) {
     Assignment->push_back(assignment[r]);
   }
 
-  delete[] distMatrixIn;
-  delete[] assignment;
+  _workspace ? (void)0 : free(buffer);
   return cost;
 }
 
@@ -58,7 +64,7 @@ float HungarianAlgorithm::Solve(const std::vector<std::vector<float>> &DistMatri
 // known as Hungarian Algorithm.
 //********************************************************//
 void HungarianAlgorithm::assignmentoptimal(int *assignment, float *cost, float *distMatrixIn, int nOfRows,
-                                           int nOfColumns) {
+                                           int nOfColumns, void* workspace) {
   float *distMatrix, *distMatrixTemp, *distMatrixEnd, *columnEnd, value, minValue;
   bool *coveredColumns, *coveredRows, *starMatrix, *newStarMatrix, *primeMatrix;
   int nOfElements, minDim, row, col;
@@ -70,21 +76,27 @@ void HungarianAlgorithm::assignmentoptimal(int *assignment, float *cost, float *
   /* generate working copy of distance Matrix */
   /* check if all matrix elements are positive */
   nOfElements = nOfRows * nOfColumns;
-  distMatrix = (float *)malloc(nOfElements * sizeof(float));
+  // sizeof(distMatrix) = nOfElements * sizeof(float)
+  distMatrix = reinterpret_cast<float*>(workspace);
   distMatrixEnd = distMatrix + nOfElements;
 
-  for (row = 0; row < nOfElements; row++) {
-    value = distMatrixIn[row];
-    // if (value < 0) std::cerr << "All matrix elements have to be non-negative." << std::endl;
-    distMatrix[row] = value;
-  }
+  // for (row = 0; row < nOfElements; row++) {
+  //   if (distMatrixIn[row] < 0) std::cerr << "All matrix elements have to be non-negative." << std::endl;
+  // }
+  mempcpy(distMatrix, distMatrixIn, nOfElements * sizeof(float));
 
   /* memory allocation */
-  coveredColumns = (bool *)calloc(nOfColumns, sizeof(bool));
-  coveredRows = (bool *)calloc(nOfRows, sizeof(bool));
-  starMatrix = (bool *)calloc(nOfElements, sizeof(bool));
-  primeMatrix = (bool *)calloc(nOfElements, sizeof(bool));
-  newStarMatrix = (bool *)calloc(nOfElements, sizeof(bool)); /* used in step4 */
+  memset(distMatrixEnd, 0, nOfElements * 3 + nOfColumns + nOfRows);
+  // sizeof(starMatrix) = nOfElements * sizeof(bool)
+  starMatrix = reinterpret_cast<bool*>(distMatrixEnd);
+  // sizeof(primeMatrix) = nOfElements * sizeof(bool)
+  primeMatrix = starMatrix + nOfElements;
+  // sizeof(newStarMatrix) = nOfElements * sizeof(bool)
+  newStarMatrix = primeMatrix + nOfElements; /* used in step4 */
+  // sizeof(coveredColumns) = nOfColumns * sizeof(bool)
+  coveredColumns = newStarMatrix + nOfElements;
+  // sizeof(coveredRows) = nOfRows * sizeof(bool)
+  coveredRows = coveredColumns + nOfColumns;
 
   /* preliminary steps */
   if (nOfRows <= nOfColumns) {
@@ -157,14 +169,6 @@ void HungarianAlgorithm::assignmentoptimal(int *assignment, float *cost, float *
 
   /* compute cost and remove invalid assignments */
   computeassignmentcost(assignment, cost, distMatrixIn, nOfRows);
-
-  /* free allocated memory */
-  free(distMatrix);
-  free(coveredColumns);
-  free(coveredRows);
-  free(starMatrix);
-  free(primeMatrix);
-  free(newStarMatrix);
 
   return;
 }

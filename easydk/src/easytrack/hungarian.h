@@ -15,14 +15,19 @@
 #include <iostream>
 #include <vector>
 
+#include "matrix.h"
+
 class HungarianAlgorithm {
  public:
-  HungarianAlgorithm();
-  ~HungarianAlgorithm();
-  float Solve(const std::vector<std::vector<float>> &DistMatrix, std::vector<int> *Assignment);
+  float Solve(const edk::Matrix &DistMatrix, std::vector<int> *Assignment,
+              void *workspace = nullptr);
+  size_t GetWorkspaceSize(size_t rows, size_t cols) {
+    return cols * rows * 11 + rows * 5 + cols;
+  }
 
  private:
-  void assignmentoptimal(int *assignment, float *cost, float *distMatrix, int nOfRows, int nOfColumns);
+  void assignmentoptimal(int *assignment, float *cost, float *distMatrix,
+                         int nOfRows, int nOfColumns, void* workspace);
   void buildassignmentvector(int *assignment, bool *starMatrix, int nOfRows, int nOfColumns);
   void computeassignmentcost(int *assignment, float *cost, float *distMatrix, int nOfRows);
   void step2a(int *assignment, float *distMatrix, bool *starMatrix, bool *newStarMatrix, bool *primeMatrix,

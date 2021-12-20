@@ -966,7 +966,7 @@ copy_frame_d2h(GstCnvideodec* self, cncodecFrame* frame)
 {
   GstMemory* mem = nullptr;
   thread_local GstMapInfo info;
-  thread_local edk::MluMemoryOp mem_op;
+  using mem_op = edk::MluMemoryOp;
   GST_DEBUG_OBJECT(self, "transform from device(MLU) memory to host memory");
 
   // prepare memory
@@ -979,14 +979,14 @@ copy_frame_d2h(GstCnvideodec* self, cncodecFrame* frame)
   // copy data from device to host
 #define CNCODEC_PLANE_DATA(frame, index) reinterpret_cast<void*>(frame->plane[index].addr)
   if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV21) {
-    mem_op.MemcpyD2H(info.data, CNCODEC_PLANE_DATA(frame, 0), frame->stride[0] * frame->height);
-    mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height, CNCODEC_PLANE_DATA(frame, 1),
+    mem_op::MemcpyD2H(info.data, CNCODEC_PLANE_DATA(frame, 0), frame->stride[0] * frame->height);
+    mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height, CNCODEC_PLANE_DATA(frame, 1),
                      (frame->stride[1] * frame->height) >> 1);
   } else if (fmt == GST_VIDEO_FORMAT_I420) {
-    mem_op.MemcpyD2H(info.data, CNCODEC_PLANE_DATA(frame, 0), frame->stride[0] * frame->height);
-    mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height, CNCODEC_PLANE_DATA(frame, 1),
+    mem_op::MemcpyD2H(info.data, CNCODEC_PLANE_DATA(frame, 0), frame->stride[0] * frame->height);
+    mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height, CNCODEC_PLANE_DATA(frame, 1),
                      (frame->stride[1] * frame->height) >> 1);
-    mem_op.MemcpyD2H(info.data + frame->stride[0] * frame->height + (frame->stride[1] * frame->height >> 1), CNCODEC_PLANE_DATA(frame, 2),
+    mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height + (frame->stride[1] * frame->height >> 1), CNCODEC_PLANE_DATA(frame, 2),
                      (frame->stride[2] * frame->height) >> 1);
   } else {
     gst_memory_unmap(mem, &info);

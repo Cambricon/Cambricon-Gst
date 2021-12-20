@@ -1,98 +1,45 @@
 #include "match.h"
 
 #include <algorithm>
-#include <cmath>
 #include <functional>
-#include <limits>
 #include <map>
-#include <numeric>
 #include <string>
 #include <vector>
 
-#define AVERAGE_DISTANCE false
+#include "matrix.h"
 
 namespace edk {
 
-static float CosineDistance(const std::vector<std::vector<float>>& track_feature, const std::vector<float>& feature) {
-  float cos_simi, x_y, y_squa, x_squa;
-  float max_simi = 0.;
-  size_t feat_size = feature.size();
-#if AVERAGE_DISTANCE
-  size_t feat_num = track_feature.size();
-  x_squa = y_squa = x_y = 0.;
-  for (size_t i = 0; i < feat_size; ++i) {
-    float tra_feat = 0.;
-    for (size_t j = 0; j < feat_num; ++j) {
-      tra_feat += track_feature[j][i];
-    }
-    tra_feat /= feat_num;
-    x_squa += feature[i] * feature[i];
-    y_squa += tra_feat * tra_feat;
-    x_y += tra_feat * feature[i];
-  }
-  cos_simi = x_y / (std::sqrt(x_squa) * std::sqrt(y_squa));
-  max_simi = std::max(cos_simi, max_simi);
+static float CosineDistance(const std::vector<Feature>& track_feats, const Feature& det) {
+  float cos_simi, x_y, y_mold, x_mold;
+  float max_simi = 0.f;
 
-#else
-  for (const auto& feat : track_feature) {
-    x_squa = y_squa = x_y = 0;
-    for (size_t i = 0; i < feat_size; i++) {
-      x_squa += feature[i] * feature[i];
-      y_squa += feat[i] * feat[i];
-      x_y += feature[i] * feat[i];
-    }
-    if (x_squa * y_squa == 0) {
+  x_mold = det.mold < 0 ? L2Norm(det.vec) : det.mold;
+  det.mold = det.mold < 0 ? x_mold : det.mold;
+  for (const auto& track : track_feats) {
+    track.mold = track.mold < 0 ? L2Norm(track.vec) : track.mold;
+    y_mold = track.mold;
+    x_y = InnerProduct(track.vec, det.vec);
+    if (x_mold == 0.f || y_mold == 0.f) {
       cos_simi = -1;
     } else {
-      cos_simi = x_y / (std::sqrt(x_squa) * std::sqrt(y_squa));
+      cos_simi = x_y / (x_mold * y_mold);
     }
     max_simi = std::max(cos_simi, max_simi);
   }
-#endif
 
   if (max_simi > 1) max_simi = 1;
   return 1 - max_simi;
 }
 
-#ifdef ENABLE_ECULIDEAN_DISTANCE
-static inline float L2Norm(const std::vector<float>& feature) {
-  return std::sqrt(std::inner_product(feature.begin(), feature.end(), feature.begin(), 0));
+thread_local detail::HungarianWorkspace MatchAlgorithm::workspace_;
+
+MatchAlgorithm* MatchAlgorithm::Instance(const std::string& func) {
+  static std::map<std::string, MatchAlgorithm> algos{{"Cosine", MatchAlgorithm(CosineDistance)}};
+  return &(algos.at(func));
 }
 
-static float EculideanDistance(const std::vector<std::vector<float>>& track_feature,
-                               const std::vector<float>& feature) {
-  float dist, feat_norm, track_norm, ele_minus;
-  float min_dist = std::numeric_limits<float>::max();
-  feat_norm = L2Norm(feature);
-  size_t feat_size = feature.size();
-  for (const auto& feat : track_feature) {
-    dist = 0;
-    track_norm = L2Norm(feat);
-    for (size_t i = 0; i < feat_size; i++) {
-      ele_minus = (feature[i] / feat_norm - feat[i] / track_norm);
-      dist += ele_minus * ele_minus;
-    }
-    min_dist = std::min(min_dist, std::sqrt(dist));
-  }
-  return min_dist;
-}
-#endif
-
-std::map<std::string, DistanceFunc> MatchAlgorithm::distance_algo_;
-
-MatchAlgorithm::MatchAlgorithm() {
-  distance_algo_["Cosine"] = CosineDistance;
-#ifdef ENABLE_ECULIDEAN_DISTANCE
-  distance_algo_["Eculidean"] = EculideanDistance;
-#endif
-}
-
-MatchAlgorithm* MatchAlgorithm::Instance() {
-  static MatchAlgorithm instance;
-  return &instance;
-}
-
-float MatchAlgorithm::IoU(const Rect& a, const Rect& b) {
+inline float MatchAlgorithm::IoU(const Rect& a, const Rect& b) {
   float tl_x = std::max(a.xmin, b.xmin);
   float tl_y = std::max(a.ymin, b.ymin);
   float br_x = std::min(a.xmax, b.xmax);
@@ -109,19 +56,13 @@ float MatchAlgorithm::IoU(const Rect& a, const Rect& b) {
   return area_intersection / (area_a + area_b - area_intersection);
 }
 
-CostMatrix MatchAlgorithm::IoUCost(const std::vector<Rect>& det_rects, const std::vector<Rect>& tra_rects) {
-  CostMatrix res;
-  for (auto& det : det_rects) {
-    std::vector<float> arr;
-
-    for (auto& tra : tra_rects) {
-      float iou_cost_value = 1.0 - IoU(tra, det);
-      arr.push_back(iou_cost_value);
+Matrix MatchAlgorithm::IoUCost(const std::vector<Rect>& det_rects, const std::vector<Rect>& tra_rects) {
+  Matrix res(det_rects.size(), tra_rects.size());
+  for (uint32_t det_idx = 0; det_idx < res.Rows(); ++det_idx) {
+    for (uint32_t tra_idx = 0; tra_idx < res.Cols(); ++tra_idx) {
+      res(det_idx, tra_idx) = 1.0 - IoU(tra_rects[tra_idx], det_rects[det_idx]);
     }
-
-    res.push_back(arr);
   }
-
   return res;
 }
 

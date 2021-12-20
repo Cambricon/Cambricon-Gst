@@ -211,7 +211,7 @@ void MluResizeConvertOp::BatchingUp(const InputData& input_data) {
 
 bool MluResizeConvertOp::SyncOneOutput(void* dst) {
   if (nullptr == d_ptr_->queue_) {
-    LOGI(RESIZE_CONVERT) << "MluTaskQueue has not been set, MluResizeConvertOp will create a new one";
+    LOGD(RESIZE_CONVERT) << "MluTaskQueue has not been set, MluResizeConvertOp will create a new one";
     if (!d_ptr_->PrepareTaskQueue()) {
       return false;
     }

@@ -23,6 +23,7 @@
 #include <cnrt.h>
 
 #include <atomic>
+#include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -30,14 +31,13 @@
 
 #include "cxxutil/log.h"
 #include "cxxutil/spinlock.h"
+#include "internal/cnrt_wrap.h"
 #include "internal/mlu_task_queue.h"
 
 using std::string;
 using std::to_string;
 
 namespace edk {
-
-#define MLU_CHANNEL_NUM 4
 
 MluTaskQueue::Mark MluTaskQueue::PlaceMark() {
   uint32_t idx = 0;
@@ -74,32 +74,26 @@ float MluTaskQueue::Count(const MluTaskQueue::Mark& s, const MluTaskQueue::Mark&
 
 MluTaskQueue::MluTaskQueue() {
   priv_.reset(new MluTaskQueuePrivate);
-  constexpr uint32_t init_mark_num = 2;
-  priv_->marks.reserve(init_mark_num * 2);
-  priv_->marks_valid.reserve(init_mark_num * 2);
-  for (uint32_t cnt = 0; cnt < init_mark_num; ++cnt) {
-    priv_->marks.emplace_back();
-    priv_->marks_valid.push_back(true);
-  }
 }
 
 std::shared_ptr<MluTaskQueue> MluTaskQueue::Create() {
   auto q = std::shared_ptr<MluTaskQueue>(new MluTaskQueue);
   LOGD(DEVICE) << "Create cnrtQueue";
-  CALL_CNRT_FUNC(cnrtCreateQueue(&q->priv_->queue), "Create cnrtQueue failed.");
+  CALL_CNRT_FUNC(cnrt::QueueCreate(&q->priv_->queue), "Create cnrtQueue failed.");
   return q;
 }
 
 void MluTaskQueue::Sync() {
   CHECK(DEVICE, priv_->queue) << "task queue is uninitialized!";
-  CALL_CNRT_FUNC(cnrtSyncQueue(priv_->queue), "Sync queue failed.");
+  CALL_CNRT_FUNC(cnrt::QueueSync(priv_->queue), "Sync queue failed.");
   LOGT(DEVICE) << "Sync MLU task queue: " << reinterpret_cast<void*>(priv_->queue);
 }
 
 MluTaskQueuePrivate::~MluTaskQueuePrivate() {
   if (queue) {
     LOGD(DEVICE) << "Destroy cnrtQueue";
-    cnrtRet_t ret = cnrtDestroyQueue(queue);
+    cnrtRet_t ret = cnrt::QueueDestroy(queue);
+    queue = nullptr;
     if (ret != CNRT_RET_SUCCESS) {
       LOGE(DEVICE) << "Destroy cnrtQueue failed, error code: " << ret;
     }
@@ -115,24 +109,28 @@ class CnrtInitTool {
   CnrtInitTool() : is_initialized_(false) {}
 
   ~CnrtInitTool() {
+#if CNRT_MAJOR_VERSION < 5
     if (is_initialized_) {
       LOGI(DEVICE) << "Cambricon runtime destroy";
       cnrtDestroy();
     }
+#endif
   }
 
   void Init() {
+#if CNRT_MAJOR_VERSION < 5
     SpinLockGuard lk(lock_);
     if (!is_initialized_) {
       CALL_CNRT_FUNC(cnrtInit(0), "Init cambricon runtime failed.");
       uint32_t dev_cnt;
       CALL_CNRT_FUNC(cnrtGetDeviceCount(&dev_cnt), "Get device count failed.");
-      if (0 == dev_cnt) {
+      if (static_cast<decltype(dev_cnt)>(0) == dev_cnt) {
         THROW_EXCEPTION(Exception::UNAVAILABLE, "No device found.");
       }
       LOGI(DEVICE) << "Cambricon runtime init success.";
       is_initialized_ = true;
     }
+#endif
   }
 
  private:
@@ -161,26 +159,23 @@ uint32_t MluContext::GetDeviceNum() {
 
 void MluContext::BindDevice() {
   _cnrt_init_tool::cnrt_init_tool.Init();
+#if CNRT_MAJOR_VERSION < 5
   cnrtDev_t dev;
   CALL_CNRT_FUNC(cnrtGetDeviceHandle(&dev, dev_id_), "Get device failed.");
   CALL_CNRT_FUNC(cnrtSetCurrentDevice(dev), "Set current device failed.");
+#else
+  CALL_CNRT_FUNC(cnrtSetDevice(dev_id_), "Set device failed.");
+#endif
   LOGT(DEVICE) << "Bind device [" << dev_id_ << "] for this thread";
-  if (channel_id_ >= 0) {
-    if (channel_id_ >= MLU_CHANNEL_NUM) {
-      THROW_EXCEPTION(Exception::INVALID_ARG, "Only " + std::to_string(MLU_CHANNEL_NUM) +
-                                                  " channel per mlu, channel id should less than " +
-                                                  std::to_string(MLU_CHANNEL_NUM));
-    }
-    cnrtChannelType_t channel = static_cast<cnrtChannelType_t>(channel_id_);
-    CALL_CNRT_FUNC(cnrtSetCurrentChannel(channel), "Set current channel failed.");
-    LOGT(DEVICE) << "Bind channel [" << channel_id_ << "] for this thread";
-  }
+#if CNRT_MAJOR_VERSION < 5
   CALL_CNRT_FUNC(cnrtSetDeviceFlag(1), "Set device flag failed.");
+#endif
 }
 
 CoreVersion MluContext::GetCoreVersion() {
   _cnrt_init_tool::cnrt_init_tool.Init();
   static std::mutex m;
+#if CNRT_MAJOR_VERSION < 5
   CoreVersion version;
   cnrtDeviceInfo_t device_info;
   std::unique_lock<std::mutex> lk(m);
@@ -198,10 +193,35 @@ CoreVersion MluContext::GetCoreVersion() {
       break;
     }
     default:
-      THROW_EXCEPTION(Exception::INTERNAL,
-                      "Unsupport cnrt core version " + std::to_string(static_cast<int>(device_info.core_version)));
+      LOGE(DEVICE) << "Unsupport cnrt core version " << static_cast<int>(device_info.core_version);
+      version = CoreVersion::INVALID;
   }
   return version;
+#else
+  constexpr int DEVICE_NAME_LENGTH = 64;
+  struct DeviceName {
+    char name[DEVICE_NAME_LENGTH];
+    CoreVersion version;
+  };
+  using edk::CoreVersion;
+  static DeviceName name_list_table[] = {
+    {"MLU270", CoreVersion::MLU270},
+    {"MLU220", CoreVersion::MLU220},
+    {"MLU370", CoreVersion::MLU370},
+    {"CE3226", CoreVersion::CE3226}
+  };
+  static uint32_t num = sizeof(name_list_table) / sizeof(DeviceName);
+  cnrtDeviceProp_t prop;
+  CALL_CNRT_FUNC(cnrtGetDeviceProperties(&prop, dev_id_), "Get device properties failed");
+  for (uint32_t idx = 0; idx < num; ++idx) {
+    const char* name = name_list_table[idx].name;
+    if (0 == strncmp(name, prop.name, strlen(name))) {
+      return name_list_table[idx].version;
+    }
+  }
+  LOGE(DEVICE) << "Unsupport device name " << prop.name;
+  return CoreVersion::INVALID;
+#endif
 }
 
 }  // namespace edk

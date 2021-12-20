@@ -95,21 +95,6 @@ class ModelLoader {
   ~ModelLoader();
 
   /**
-   * @brief Query whether model outputs RGB0 image together with inference result
-   *
-   * @param output_index RGB0 output index
-   * @return Return true if have RGB0 output, and RGB0 index assigned to output_index
-   */
-  bool WithRGB0Output(int* output_index = nullptr) const;
-
-  /**
-   * @brief Query whether model input is YUV image
-   *
-   * @return Return true if model input is YUV image
-   */
-  bool WithYUVInput() const;
-
-  /**
    * @brief Set specified input data layout on CPU
    *
    * @param layout Data layout

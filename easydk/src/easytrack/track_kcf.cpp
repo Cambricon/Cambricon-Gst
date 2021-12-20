@@ -257,12 +257,12 @@ void KcfTrackPrivate::ProcessTrack(const std::vector<DetectObject> &det_objs, in
     for (auto &obj : track_objs_) {
       track_rects.push_back(obj.rect);
     }
-    CostMatrix dist_cost = match_->IoUCost(det_rects, track_rects);
+    Matrix dist_cost = match_->IoUCost(det_rects, track_rects);
     match_->HungarianMatch(dist_cost, &assignments);
 
     remained_detections.insert(res.unmatched_detections.begin(), res.unmatched_detections.end());
     for (size_t i = 0; i < assignments.size(); ++i) {
-      if (assignments[i] < 0 || dist_cost[i][assignments[i]] > kcf_->max_iou_distance_) {
+      if (assignments[i] < 0 || dist_cost(i, assignments[i]) > kcf_->max_iou_distance_) {
         res.unmatched_tracks.push_back(i);
       } else {
         res.matches.push_back(std::make_pair(res.unmatched_detections[assignments[i]], i));
