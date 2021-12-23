@@ -211,6 +211,7 @@ void*
 cn_syncedmem_get_mutable_host_data(GstSyncedMemory_t mem)
 {
   to_cpu(mem);
+  mem->head = GST_SYNCHEAD_AT_CPU;
   return mem->host_ptr;
 }
 
@@ -218,6 +219,7 @@ void*
 cn_syncedmem_get_mutable_dev_data(GstSyncedMemory_t mem)
 {
   to_mlu(mem);
+  mem->head = GST_SYNCHEAD_AT_MLU;
   return mem->dev_ptr;
 }
 

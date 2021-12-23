@@ -32,7 +32,7 @@
 #include "cn_video_enc.h"
 #include "cnrt.h"
 #include "common/mlu_memory_meta.h"
-#include "common/mlu_utils.h"
+#include "common/utils.h"
 #include "device/mlu_context.h"
 #include "easyinfer/mlu_memory_op.h"
 #include "encode_type.h"

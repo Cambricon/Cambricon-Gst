@@ -17,8 +17,10 @@
  *  along with CNStream-Gst.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-#ifndef MLU_UTILS_H_
-#define MLU_UTILS_H_
+#ifndef GST_LIBS_UTILS_H_
+#define GST_LIBS_UTILS_H_
+
+#include <utility>
 
 #include <gst/gst.h>
 #include "device/mlu_context.h"
@@ -37,4 +39,18 @@ set_cnrt_env(GstElement* self, int device_id)
   return TRUE;
 }
 
-#endif // MLU_UTILS_H_
+template<typename Callable>
+class ScopeGuard {
+ public:
+  explicit ScopeGuard(Callable&& c) : c_(std::forward<Callable>(c)) {}
+  ~ScopeGuard() { c_(); }
+ private:
+  Callable c_;
+};
+
+class Registor {
+ public:
+  explicit Registor(std::function<void()>&& c) { c(); }
+};
+
+#endif // GST_LIBS_UTILS_H_
