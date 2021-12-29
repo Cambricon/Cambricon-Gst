@@ -77,6 +77,9 @@ set(CNRT_LIB      "$ENV{NEUWARE_HOME}/lib64/libcnrt.so")
 # ---[ cncodec
 set(CNCODEC_LIB   "$ENV{NEUWARE_HOME}/lib64/libcncodec.so")
 
+# ---[ cncv
+set(CNCV_LIB      "$ENV{NEUWARE_HOME}/lib64/libcncv.so")
+
 # ---[ edk
 add_subdirectory(easydk)
 set(EDK_LIB       "easydk")
@@ -88,6 +91,7 @@ set(LINK_LIBRARIES
   ${GSTREAMER-VIDEO_LIBRARIES}
   ${CNRT_LIB}
   ${CNCODEC_LIB}
+  ${CNCV_LIB}
   ${EDK_LIB}
 )
 

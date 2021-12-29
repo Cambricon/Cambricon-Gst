@@ -22,13 +22,15 @@
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <cstring>
+#include <mutex>
 
+#include "cncv.h"
+#include "cnrt.h"
 #include "common/mlu_memory_meta.h"
-#include "common/mlu_utils.h"
+#include "common/utils.h"
 #include "device/mlu_context.h"
 #include "easybang/resize_and_colorcvt.h"
 #include "easyinfer/mlu_memory_op.h"
-#include "easyinfer/model_loader.h"
 
 enum
 {
@@ -42,27 +44,51 @@ GST_DEBUG_CATEGORY_EXTERN(gst_cambricon_debug);
 
 #define GST_CNCONVERT_ERROR(el, domain, code, msg) GST_ELEMENT_ERROR(el, domain, code, msg, ("None"))
 
+#define CNRT_SAFECALL(func, val) \
+  do { \
+    auto ret = func; \
+    if (ret != CNRT_RET_SUCCESS) { \
+      GST_CNCONVERT_ERROR(self, LIBRARY, FAILED, ("Call [" #func "] failed")); \
+      return val; \
+    } \
+  } while(0)
+
+#define CNCV_SAFECALL(func, val) \
+  do { \
+    auto ret = func; \
+    if (ret != CNCV_STATUS_SUCCESS) { \
+      GST_CNCONVERT_ERROR(self, LIBRARY, FAILED, ("Call [" #func "] failed")); \
+      return val; \
+    } \
+  } while(0)
+
 /* the capabilities of the inputs and outputs. */
 static GstStaticPadTemplate sink_factory =
   GST_STATIC_PAD_TEMPLATE("sink",
                           GST_PAD_SINK,
                           GST_PAD_ALWAYS,
-                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, I420};"
-                                          "video/x-raw, format={NV12, NV21, I420}"));
+                          GST_STATIC_CAPS(
+                            "video/x-raw(memory:mlu), format={NV12, NV21, I420, RGB, BGR};"
+                            "video/x-raw, format={NV12, NV21, RGB, BGR, RGBA, BGRA, ARGB, ABGR}"));
 
 static GstStaticPadTemplate src_factory =
   GST_STATIC_PAD_TEMPLATE("src",
                           GST_PAD_SRC,
                           GST_PAD_ALWAYS,
-                          GST_STATIC_CAPS("video/x-raw(memory:mlu), format={NV12, NV21, RGBA, ARGB, BGRA, ABGR};"
-                                          "video/x-raw, format={NV12, NV21, I420, RGBA, ARGB, BGRA, ABGR};"));
+                          GST_STATIC_CAPS(
+                            "video/x-raw(memory:mlu), format={NV12, NV21, I420, RGB, BGR, RGBA, ARGB, BGRA, ABGR};"
+                            "video/x-raw, format={NV12, NV21, I420, RGB, BGR, RGBA, ARGB, BGRA, ABGR};"));
 
 struct GstCnconvertPrivate
 {
-  edk::MluResizeConvertOp* rcop;
+  cncvHandle_t handle;
+  cnrtQueue_t queue;
+  std::once_flag init_flag;
   GstVideoInfo sink_info;
   GstVideoInfo src_info;
   GstSyncedMemory_t mlu_dst_mem;
+  GstSyncedMemory_t tmp_mem;
+  GstSyncedMemory_t cncv_workspace;
   gint device_id;
   gboolean input_on_mlu;
   gboolean output_on_mlu;
@@ -95,8 +121,6 @@ gst_cnconvert_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer);
 // GstCnconvert private method
 static gboolean
 gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps);
-static gboolean
-resize(GstCnconvert* self, GstMluFrame_t frame);
 static gboolean
 resize_convert(GstCnconvert* self, GstMluFrame_t frame);
 static GstBuffer*
@@ -142,7 +166,11 @@ gst_cnconvert_init(GstCnconvert* self)
 
   GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
   priv->mlu_dst_mem = nullptr;
-  priv->rcop = nullptr;
+  priv->tmp_mem = nullptr;
+  priv->cncv_workspace = nullptr;
+  priv->handle = nullptr;
+  priv->queue = nullptr;
+  priv->device_id = -1;
 }
 
 static void
@@ -158,10 +186,25 @@ gst_cnconvert_finalize(GObject* object)
     }
     priv->mlu_dst_mem = nullptr;
   }
-  if (priv->rcop) {
-    priv->rcop->Destroy();
-    delete priv->rcop;
-    priv->rcop = nullptr;
+  if (priv->tmp_mem) {
+    if (cn_syncedmem_free(priv->tmp_mem)) {
+      GST_ERROR_OBJECT(self, "Free mlu memory failed");
+    }
+    priv->tmp_mem = nullptr;
+  }
+  if (priv->cncv_workspace) {
+    if (cn_syncedmem_free(priv->cncv_workspace)) {
+      GST_ERROR_OBJECT(self, "Free mlu memory failed");
+    }
+    priv->cncv_workspace = nullptr;
+  }
+  if (priv->handle) {
+    CNCV_SAFECALL(cncvDestroy(priv->handle), );
+    priv->handle = nullptr;
+  }
+  if (priv->queue) {
+    CNRT_SAFECALL(cnrtDestroyQueue(priv->queue), );
+    priv->queue = nullptr;
   }
 }
 
@@ -219,96 +262,245 @@ gst_cnconvert_sink_event(GstPad* pad, GstObject* parent, GstEvent* event)
   return ret;
 }
 
-// unsupported in this version
-static gboolean
-resize(GstCnconvert* self, GstMluFrame_t frame)
+static inline int get_channel_num_plane0(GstVideoFormat fmt)
 {
-  return FALSE;
+  switch (fmt) {
+    case GST_VIDEO_FORMAT_NV12: case GST_VIDEO_FORMAT_NV21: case GST_VIDEO_FORMAT_I420:
+      return 1;
+    case GST_VIDEO_FORMAT_RGB: case GST_VIDEO_FORMAT_BGR:
+      return 3;
+    case GST_VIDEO_FORMAT_RGBA: case GST_VIDEO_FORMAT_BGRA: case GST_VIDEO_FORMAT_ARGB: case GST_VIDEO_FORMAT_ABGR:
+      return 4;
+    default:
+      GST_ERROR("Unsupported pixel format");
+      return 0;
+  }
 }
 
-static inline edk::MluResizeConvertOp::ColorMode
-color_mode_cast(GstVideoFormat src, GstVideoFormat dst)
+static inline cncvPixelFormat format_cast(GstVideoFormat fmt)
 {
-  if (src == GST_VIDEO_FORMAT_NV12) {
-    switch (dst) {
-      case GST_VIDEO_FORMAT_RGBA:
-        return edk::MluResizeConvertOp::ColorMode::YUV2RGBA_NV12;
-      case GST_VIDEO_FORMAT_BGRA:
-        return edk::MluResizeConvertOp::ColorMode::YUV2BGRA_NV12;
-      case GST_VIDEO_FORMAT_ARGB:
-        return edk::MluResizeConvertOp::ColorMode::YUV2ARGB_NV12;
-      case GST_VIDEO_FORMAT_ABGR:
-        return edk::MluResizeConvertOp::ColorMode::YUV2ABGR_NV12;
-      default:
-        g_printerr("unsupport video format convert\n");
-        return edk::MluResizeConvertOp::ColorMode::RGBA2RGBA;
-    }
-  } else if (src == GST_VIDEO_FORMAT_NV21) {
-    switch (dst) {
-      case GST_VIDEO_FORMAT_RGBA:
-        return edk::MluResizeConvertOp::ColorMode::YUV2RGBA_NV21;
-      case GST_VIDEO_FORMAT_BGRA:
-        return edk::MluResizeConvertOp::ColorMode::YUV2BGRA_NV21;
-      case GST_VIDEO_FORMAT_ARGB:
-        return edk::MluResizeConvertOp::ColorMode::YUV2ARGB_NV21;
-      case GST_VIDEO_FORMAT_ABGR:
-        return edk::MluResizeConvertOp::ColorMode::YUV2ABGR_NV21;
-      default:
-        g_printerr("unsupport video format convert\n");
-        return edk::MluResizeConvertOp::ColorMode::RGBA2RGBA;
-    }
-  } else {
-    g_printerr("unsupport pixel format convert\n");
-    return edk::MluResizeConvertOp::ColorMode::RGBA2RGBA;
+  switch (fmt) {
+    case GST_VIDEO_FORMAT_NV12:
+      return CNCV_PIX_FMT_NV12;
+    case GST_VIDEO_FORMAT_NV21:
+      return CNCV_PIX_FMT_NV21;
+    case GST_VIDEO_FORMAT_I420:
+      return CNCV_PIX_FMT_I420;
+    case GST_VIDEO_FORMAT_RGB:
+      return CNCV_PIX_FMT_RGB;
+    case GST_VIDEO_FORMAT_BGR:
+      return CNCV_PIX_FMT_BGR;
+    case GST_VIDEO_FORMAT_RGBA:
+      return CNCV_PIX_FMT_RGBA;
+    case GST_VIDEO_FORMAT_BGRA:
+      return CNCV_PIX_FMT_BGRA;
+    case GST_VIDEO_FORMAT_ARGB:
+      return CNCV_PIX_FMT_ARGB;
+    case GST_VIDEO_FORMAT_ABGR:
+      return CNCV_PIX_FMT_ABGR;
+    default:
+      GST_ERROR("unsupport pixel format");
+      return CNCV_PIX_FMT_INVALID;
   }
+}
+
+static inline bool isYUV420sp(GstVideoFormat fmt) {
+  if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV21)
+    return true;
+
+  return false;
+}
+
+static inline bool isRGB(GstVideoFormat fmt) {
+  if (fmt == GST_VIDEO_FORMAT_RGB || fmt == GST_VIDEO_FORMAT_BGR ||
+      fmt == GST_VIDEO_FORMAT_RGBA || fmt == GST_VIDEO_FORMAT_BGRA ||
+      fmt == GST_VIDEO_FORMAT_ARGB || fmt == GST_VIDEO_FORMAT_ABGR)
+    return true;
+
+  return false;
+}
+
+static cncvImageDescriptor video_info_to_desc(const GstVideoInfo& info)
+{
+  cncvImageDescriptor desc;
+  desc.width = info.width;
+  desc.height = info.height;
+  desc.pixel_fmt = format_cast(info.finfo->format);
+  desc.color_space = CNCV_COLOR_SPACE_BT_601;
+  desc.depth = CNCV_DEPTH_8U;
+  desc.stride[0] = info.stride[0];
+  desc.stride[1] = info.stride[1];
+  desc.stride[2] = info.stride[2];
+  desc.stride[3] = info.stride[3];
+  desc.stride[4] = desc.stride[5] = 0;
+  return desc;
 }
 
 static gboolean
 resize_convert(GstCnconvert* self, GstMluFrame_t frame)
 {
   GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
-  // init rcop
-  if (!priv->rcop) {
-    priv->rcop = new edk::MluResizeConvertOp;
-    edk::MluResizeConvertOp::Attr attr;
-    edk::MluContext ctx;
-    attr.dst_w = priv->src_info.width;
-    attr.dst_h = priv->src_info.height;
-    attr.batch_size = 1;
-    attr.core_version = ctx.GetCoreVersion();
-    attr.color_mode = color_mode_cast(priv->sink_info.finfo->format, priv->src_info.finfo->format);
-    if (attr.color_mode == edk::MluResizeConvertOp::ColorMode::RGBA2RGBA)
-      return FALSE;
-    GST_INFO_OBJECT(self, "dst: %d:%d, color mode:%d, core version: %d\n", attr.dst_w, attr.dst_h,
-                    static_cast<int>(attr.color_mode), static_cast<int>(attr.core_version));
-    priv->rcop->Init(attr);
-  }
+
+  cncvImageDescriptor src_desc = video_info_to_desc(priv->sink_info);
+  cncvImageDescriptor dst_desc = video_info_to_desc(priv->src_info);
+
+  cncvRect src_roi, dst_roi;
+  src_roi.x = src_roi.y = dst_roi.x = dst_roi.y = 0;
+  src_roi.w = src_desc.width;
+  src_roi.h = src_desc.height;
+  dst_roi.w = dst_desc.width;
+  dst_roi.h = dst_desc.height;
+
+  size_t workspace_size;
+  size_t extra_size = 3 * sizeof(void*);
+  CNCV_SAFECALL(cncvGetResizeConvertWorkspaceSize(1, &src_desc, &src_roi, &dst_desc, &dst_roi, &workspace_size), FALSE);
 
   // prepare mlu memory
+  if (priv->cncv_workspace && cn_syncedmem_get_size(priv->cncv_workspace) < (workspace_size + extra_size)) {
+    cn_syncedmem_free(priv->cncv_workspace);
+    priv->cncv_workspace = nullptr;
+  }
+  if (!priv->cncv_workspace) {
+    priv->cncv_workspace = cn_syncedmem_new(workspace_size + extra_size);
+  }
+
   if (!priv->mlu_dst_mem) {
     size_t out_size = 0;
-    if (priv->src_info.finfo->format == GST_VIDEO_FORMAT_NV12 ||
-        priv->src_info.finfo->format == GST_VIDEO_FORMAT_NV21) {
-      out_size = (priv->src_info.width * priv->src_info.height * 3) >> 1;
-    } else {
-      out_size = (priv->src_info.width * priv->src_info.height) << 2;
-    }
+    out_size = (priv->src_info.width * priv->src_info.height) << 2;
     GST_DEBUG_OBJECT(self, "new syncedmem, w: %d, h:%d, out size: %lu", priv->src_info.width, priv->src_info.height,
                      out_size);
     priv->mlu_dst_mem = cn_syncedmem_new(out_size);
   }
 
-  edk::MluResizeConvertOp::InputData data;
-  data.planes[0] = cn_syncedmem_get_mutable_dev_data(frame->data[0]);
-  data.planes[1] = cn_syncedmem_get_mutable_dev_data(frame->data[1]);
-  data.src_h = priv->sink_info.height;
-  data.src_w = priv->sink_info.width;
-  data.src_stride = frame->stride[0];
-  priv->rcop->BatchingUp(data);
-  if (!priv->rcop->SyncOneOutput(cn_syncedmem_get_mutable_dev_data(priv->mlu_dst_mem))) {
-    GST_CNCONVERT_ERROR(self, LIBRARY, SETTINGS, ("%s", priv->rcop->GetLastError().c_str()));
-    return FALSE;
+  void** buf_host = reinterpret_cast<void**>(cn_syncedmem_get_mutable_host_data(priv->cncv_workspace));
+  buf_host[0] = cn_syncedmem_get_mutable_dev_data(frame->data[0]);
+  buf_host[1] = cn_syncedmem_get_mutable_dev_data(frame->data[1]);
+  buf_host[2] = cn_syncedmem_get_mutable_dev_data(priv->mlu_dst_mem);
+  buf_host = nullptr;
+  void** buf_dev = reinterpret_cast<void**>(const_cast<void*>(cn_syncedmem_get_dev_data(priv->cncv_workspace)));
+  void** src_ptr = buf_dev;
+  void** dst_ptr = buf_dev + 2;
+  void* workspace = buf_dev + 3;
+
+  CNCV_SAFECALL(cncvResizeConvert_V2(priv->handle, 1,
+                                     &src_desc, &src_roi, src_ptr,
+                                     &dst_desc, &dst_roi, dst_ptr,
+                                     workspace_size, workspace, CNCV_INTER_BILINEAR), FALSE);
+
+  CNRT_SAFECALL(cnrtSyncQueue(priv->queue), FALSE);
+
+  return TRUE;
+}
+
+static gboolean
+resize_rgb(GstCnconvert* self, GstMluFrame_t frame, GstSyncedMemory_t* _dst)
+{
+  GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
+
+  cncvImageDescriptor src_desc = video_info_to_desc(priv->sink_info);
+  cncvImageDescriptor dst_desc = video_info_to_desc(priv->src_info);
+  dst_desc.pixel_fmt = src_desc.pixel_fmt;
+  int ch = get_channel_num_plane0(priv->sink_info.finfo->format);
+  dst_desc.stride[0] = dst_desc.width * ch;
+
+  cncvRect src_roi, dst_roi;
+  src_roi.x = src_roi.y = dst_roi.x = dst_roi.y = 0;
+  src_roi.w = src_desc.width;
+  src_roi.h = src_desc.height;
+  dst_roi.w = dst_desc.width;
+  dst_roi.h = dst_desc.height;
+
+  size_t workspace_size;
+  size_t extra_size = 2 * sizeof(void*);
+  CNCV_SAFECALL(cncvGetResizeRgbxWorkspaceSize(1, &workspace_size), FALSE);
+
+  // prepare mlu memory
+  if (priv->cncv_workspace && cn_syncedmem_get_size(priv->cncv_workspace) < (workspace_size + extra_size)) {
+    cn_syncedmem_free(priv->cncv_workspace);
+    priv->cncv_workspace = nullptr;
   }
+  if (!priv->cncv_workspace) {
+    priv->cncv_workspace = cn_syncedmem_new(workspace_size + extra_size);
+  }
+
+  if (!*_dst) {
+    size_t out_size = 0;
+    out_size = (priv->src_info.width * priv->src_info.height) * ch;
+    GST_DEBUG_OBJECT(self, "new syncedmem, w: %d, h:%d, out size: %lu", priv->src_info.width, priv->src_info.height,
+                     out_size);
+    *_dst = cn_syncedmem_new(out_size);
+  }
+  GstSyncedMemory_t dst = *_dst;
+
+  void** buf_host = reinterpret_cast<void**>(cn_syncedmem_get_mutable_host_data(priv->cncv_workspace));
+  buf_host[0] = cn_syncedmem_get_mutable_dev_data(frame->data[0]);
+  buf_host[1] = cn_syncedmem_get_mutable_dev_data(dst);
+  buf_host = nullptr;
+  void** buf_dev = reinterpret_cast<void**>(const_cast<void*>(cn_syncedmem_get_dev_data(priv->cncv_workspace)));
+  void** src_ptr = buf_dev;
+  void** dst_ptr = buf_dev + 1;
+  void* workspace = buf_dev + 2;
+
+  CNCV_SAFECALL(cncvResizeRgbx(priv->handle, 1,
+                               src_desc, &src_roi, src_ptr,
+                               dst_desc, &dst_roi, dst_ptr,
+                               workspace_size, workspace, CNCV_INTER_BILINEAR), FALSE);
+
+  CNRT_SAFECALL(cnrtSyncQueue(priv->queue), FALSE);
+
+  return TRUE;
+}
+
+static gboolean
+cvt_rgb(GstCnconvert* self, GstSyncedMemory_t src, GstSyncedMemory_t* pdst)
+{
+  GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
+
+  cncvImageDescriptor src_desc = video_info_to_desc(priv->src_info);
+  cncvImageDescriptor dst_desc = video_info_to_desc(priv->src_info);
+  src_desc.pixel_fmt = format_cast(priv->sink_info.finfo->format);
+  src_desc.stride[0] = src_desc.width * get_channel_num_plane0(priv->sink_info.finfo->format);
+
+  cncvRect src_roi, dst_roi;
+  src_roi.x = src_roi.y = dst_roi.x = dst_roi.y = 0;
+  src_roi.w = src_desc.width;
+  src_roi.h = src_desc.height;
+  dst_roi.w = dst_desc.width;
+  dst_roi.h = dst_desc.height;
+
+  size_t extra_size = 2 * sizeof(void*);
+
+  // prepare mlu memory
+  if (priv->cncv_workspace && cn_syncedmem_get_size(priv->cncv_workspace) < extra_size) {
+    cn_syncedmem_free(priv->cncv_workspace);
+    priv->cncv_workspace = nullptr;
+  }
+  if (!priv->cncv_workspace) {
+    priv->cncv_workspace = cn_syncedmem_new(extra_size);
+  }
+
+  if (!*pdst) {
+    size_t out_size = 0;
+    out_size = priv->src_info.stride[0] * priv->src_info.height;
+    GST_DEBUG_OBJECT(self, "new syncedmem, w: %d, h:%d, out size: %lu", priv->src_info.width, priv->src_info.height,
+                     out_size);
+    *pdst = cn_syncedmem_new(out_size);
+  }
+  GstSyncedMemory_t dst = *pdst;
+
+  void** buf_host = reinterpret_cast<void**>(cn_syncedmem_get_mutable_host_data(priv->cncv_workspace));
+  buf_host[0] = cn_syncedmem_get_mutable_dev_data(src);
+  buf_host[1] = cn_syncedmem_get_mutable_dev_data(dst);
+  buf_host = nullptr;
+  void** buf_dev = reinterpret_cast<void**>(const_cast<void*>(cn_syncedmem_get_dev_data(priv->cncv_workspace)));
+  void** src_ptr = buf_dev;
+  void** dst_ptr = buf_dev + 1;
+
+  CNCV_SAFECALL(cncvRgbxToRgbx(priv->handle, 1,
+                               src_desc, src_roi, src_ptr,
+                               dst_desc, dst_roi, dst_ptr), FALSE);
+
+  CNRT_SAFECALL(cnrtSyncQueue(priv->queue), FALSE);
 
   return TRUE;
 }
@@ -343,8 +535,10 @@ clear_alignment(GstMemory* out_mem, const GstMapInfo& info, GstMluFrame_t frame,
       }
     }
   } else {
+    int ch = 4;
+    if (fmt == GST_VIDEO_FORMAT_RGB || fmt == GST_VIDEO_FORMAT_BGR) ch = 3;
     for (uint32_t i = 0; i < frame->height; i++) {
-      memcpy(cp_info.data + i * frame->width * 3, info.data + i * frame->stride[0] * 3, frame->width * 3);
+      memcpy(cp_info.data + i * frame->width * ch, info.data + i * frame->stride[0], frame->width * ch);
     }
   }
   gst_memory_unmap(out_mem, &cp_info);
@@ -361,11 +555,12 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
 
   // prepare memory
   float scale = 1;
-  uint32_t ch = 4;
   if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV21 || fmt == GST_VIDEO_FORMAT_I420) {
     scale = 1.5;
-    ch = 1;
+  } else if (fmt == GST_VIDEO_FORMAT_RGB || fmt == GST_VIDEO_FORMAT_BGR) {
+    scale = 1;
   }
+  int ch = get_channel_num_plane0(fmt);
   mem = gst_allocator_alloc(NULL, frame->stride[0] * frame->height * scale * ch, NULL);
   gst_memory_map(mem, &info, (GstMapFlags)GST_MAP_READWRITE);
 
@@ -381,13 +576,13 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
     mem_op::MemcpyD2H(info.data + frame->stride[0] * frame->height + (frame->stride[1] * frame->height >> 1), cn_syncedmem_get_mutable_dev_data(frame->data[2]),
                      (frame->stride[2] * frame->height) >> 1);
   } else {
-    mem_op::MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height * 4);
+    mem_op::MemcpyD2H(info.data, cn_syncedmem_get_mutable_dev_data(frame->data[0]), frame->stride[0] * frame->height);
   }
 
   GST_DEBUG_OBJECT(self, "stride = %d, width = %d\n", frame->stride[0], frame->width);
 
   // clear alignment
-  if (frame->stride[0] != frame->width) {
+  if (frame->stride[0] != frame->width * ch) {
     GST_INFO_OBJECT(self, "clear frame alignment");
     GstMemory* cp_mem = gst_allocator_alloc(NULL, frame->width * frame->height * scale * ch, NULL);
     clear_alignment(cp_mem, info, frame, fmt);
@@ -410,18 +605,9 @@ transform_to_cpu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
   return buffer;
 }
 
-template<typename Callable>
-class ScopeGuard {
- public:
-  explicit ScopeGuard(Callable&& c) : c_(std::forward<Callable>(c)) {}
-  ~ScopeGuard() { c_(); }
- private:
-  Callable c_;
-};
-
 static gboolean
 transform_to_mlu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, GstVideoFormat fmt) {
-  if (fmt != GST_VIDEO_FORMAT_NV12 && fmt != GST_VIDEO_FORMAT_NV21) {
+  if (fmt == GST_VIDEO_FORMAT_I420) {
     GST_ERROR_OBJECT(self, "unsupported pixel format!");
     return FALSE;
   }
@@ -436,17 +622,24 @@ transform_to_mlu(GstCnconvert* self, GstBuffer* buffer, GstMluFrame_t frame, Gst
   GST_DEBUG_OBJECT(self, "transform from host memory to device(MLU) memory");
   frame->width = host_frame.info.width;
   frame->height = host_frame.info.height;
-  frame->n_planes = 2;
+  frame->n_planes = 1;
   frame->device_id = priv->device_id;
-
   frame->stride[0] = host_frame.info.stride[0];
-  frame->stride[1] = host_frame.info.stride[1];
-  size_t y_len = frame->height * frame->stride[0];
-  size_t uv_len = frame->height * frame->stride[1] >> 1;
-  frame->data[0] = cn_syncedmem_new(y_len);
-  frame->data[1] = cn_syncedmem_new(uv_len);
-  mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[0]), host_frame.data[0], y_len);
-  mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[1]), host_frame.data[1], uv_len);
+
+  if (fmt == GST_VIDEO_FORMAT_NV12 || fmt == GST_VIDEO_FORMAT_NV21) {
+    frame->n_planes = 2;
+    frame->stride[1] = host_frame.info.stride[1];
+    size_t y_len = frame->height * frame->stride[0];
+    size_t uv_len = frame->height * frame->stride[1] >> 1;
+    frame->data[0] = cn_syncedmem_new(y_len);
+    frame->data[1] = cn_syncedmem_new(uv_len);
+    mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[0]), host_frame.data[0], y_len);
+    mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[1]), host_frame.data[1], uv_len);
+  } else {
+    size_t len = frame->height * frame->stride[0];
+    frame->data[0] = cn_syncedmem_new(len);
+    mem_op::MemcpyH2D(cn_syncedmem_get_mutable_dev_data(frame->data[0]), host_frame.data[0], len);
+  }
   return TRUE;
 }
 
@@ -476,14 +669,13 @@ gst_cnconvert_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer)
     frame = meta->frame;
     // set mlu environment
     if (!cnrt_env) {
-      priv->device_id = priv->device_id == -1 ? frame->device_id : priv->device_id;
-      g_return_val_if_fail(priv->device_id == frame->device_id, GST_FLOW_ERROR);
+      priv->device_id = frame->device_id;
       g_return_val_if_fail(set_cnrt_env(GST_ELEMENT(self), priv->device_id), GST_FLOW_ERROR);
       cnrt_env = true;
     }
   } else {
     if (!cnrt_env) {
-      g_return_val_if_fail(priv->device_id != -1, GST_FLOW_ERROR);
+      priv->device_id = priv->device_id == -1 ? 0 : priv->device_id;
       g_return_val_if_fail(set_cnrt_env(GST_ELEMENT(self), priv->device_id), GST_FLOW_ERROR);
       cnrt_env = true;
     }
@@ -492,16 +684,37 @@ gst_cnconvert_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer)
     meta = gst_buffer_add_mlu_memory_meta(buffer, frame, "convert");
   }
 
+  // init cncvHandle and cnrtQueue
+  std::call_once(priv->init_flag, [self, priv]() {
+    CNRT_SAFECALL(cnrtCreateQueue(&priv->queue), );
+    CNCV_SAFECALL(cncvCreate(&priv->handle), );
+    CNCV_SAFECALL(cncvSetQueue(priv->handle, priv->queue), );
+  });
+
   // process
-  if (!(priv->disable_convert && priv->disable_resize)) {
+  do {
+    if (priv->disable_convert && priv->disable_resize) {
+      break;
+    }
     if (priv->disable_convert) {
-      // resize, NV12 supported
-      if (!resize(self, frame))
+      // resize, rgb/bgr supported
+      if (!resize_rgb(self, frame, &priv->mlu_dst_mem))
+        return GST_FLOW_ERROR;
+    } else if (priv->disable_resize) {
+      if (!cvt_rgb(self, frame->data[0], &priv->mlu_dst_mem))
         return GST_FLOW_ERROR;
     } else {
       // resize and convert
-      if (!resize_convert(self, frame))
+      if (isYUV420sp(priv->sink_info.finfo->format) && isRGB(priv->src_info.finfo->format)) {
+        if (!resize_convert(self, frame))
+          return GST_FLOW_ERROR;
+      } else if (isRGB(priv->sink_info.finfo->format) && isRGB(priv->src_info.finfo->format)) {
+        if (!resize_rgb(self, frame, &priv->tmp_mem) || !cvt_rgb(self, priv->tmp_mem, &priv->mlu_dst_mem))
+          return GST_FLOW_ERROR;
+      } else {
+        GST_CNCONVERT_ERROR(self, LIBRARY, FAILED, ("unsupported resize and color convert mode"));
         return GST_FLOW_ERROR;
+      }
     }
 
     // update mlu memory meta
@@ -517,9 +730,9 @@ gst_cnconvert_chain(GstPad* pad, GstObject* parent, GstBuffer* buffer)
     priv->mlu_dst_mem = nullptr;
     frame->height = priv->src_info.height;
     frame->width = priv->src_info.width;
-    frame->stride[0] = priv->src_info.width;
+    frame->stride[0] = priv->src_info.width * get_channel_num_plane0(priv->src_info.finfo->format);
     frame->n_planes = 1;
-  }
+  } while (0);
 
   if (!priv->output_on_mlu) {
     // copyout
@@ -562,7 +775,12 @@ gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps)
                                          "video/x-raw(memory:mlu), format={NV21, ARGB, ABGR, BGRA, RGBA};");
       break;
     case GST_VIDEO_FORMAT_I420:
-      filter_caps = gst_caps_from_string("video/x-raw, format={I420};");
+      filter_caps = gst_caps_from_string("video/x-raw(memory:mlu), format={I420};video/x-raw, format={I420};");
+      break;
+    case GST_VIDEO_FORMAT_RGB: case GST_VIDEO_FORMAT_BGR:
+    case GST_VIDEO_FORMAT_RGBA: case GST_VIDEO_FORMAT_BGRA: case GST_VIDEO_FORMAT_ARGB: case GST_VIDEO_FORMAT_ABGR:
+      filter_caps = gst_caps_from_string("video/x-raw, format={RGB, BGR, ARGB, ABGR, BGRA, RGBA};"
+                                         "video/x-raw(memory:mlu), format={RGB, BGR, ARGB, ABGR, BGRA, RGBA};");
       break;
     default:
       GST_ERROR_OBJECT(self, "unsupport pixel format in caps: %" GST_PTR_FORMAT, sinkcaps);
@@ -619,8 +837,16 @@ gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps)
     priv->disable_resize =
       priv->sink_info.width == priv->src_info.width && priv->sink_info.height == priv->src_info.height;
     priv->disable_convert = priv->sink_info.finfo->format == priv->src_info.finfo->format;
-    if (priv->disable_convert && !priv->disable_resize) {
-      GST_ERROR_OBJECT(self, "this version do not support resize without convert");
+
+    if (priv->disable_resize && !priv->disable_convert &&
+        (!isRGB(priv->sink_info.finfo->format) || !isRGB(priv->src_info.finfo->format))) {
+      GST_CNCONVERT_ERROR(self, LIBRARY, SETTINGS, ("without resize, only rgb series to rgb series convert is supported"));
+      return FALSE;
+    }
+    if (!priv->disable_resize && priv->disable_convert &&
+        (!isRGB(priv->sink_info.finfo->format))) {
+      GST_CNCONVERT_ERROR(self, LIBRARY, SETTINGS, ("without color convert, only rgb series resize is supported"));
+      return FALSE;
     }
 
     if (priv->mlu_dst_mem) {
@@ -630,10 +856,12 @@ gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps)
       }
       priv->mlu_dst_mem = nullptr;
     }
-    if (priv->rcop) {
-      priv->rcop->Destroy();
-      delete priv->rcop;
-      priv->rcop = nullptr;
+    if (priv->tmp_mem) {
+      if (cn_syncedmem_free(priv->tmp_mem)) {
+        GST_CNCONVERT_ERROR(self, RESOURCE, CLOSE, ("Free mlu memory failed"));
+        return FALSE;
+      }
+      priv->tmp_mem = nullptr;
     }
   }
 
