@@ -181,19 +181,19 @@ gst_cnconvert_finalize(GObject* object)
   GstCnconvertPrivate* priv = gst_cnconvert_get_private(self);
 
   if (priv->mlu_dst_mem) {
-    if (cn_syncedmem_free(priv->mlu_dst_mem)) {
+    if (!cn_syncedmem_free(priv->mlu_dst_mem)) {
       GST_ERROR_OBJECT(self, "Free mlu memory failed");
     }
     priv->mlu_dst_mem = nullptr;
   }
   if (priv->tmp_mem) {
-    if (cn_syncedmem_free(priv->tmp_mem)) {
+    if (!cn_syncedmem_free(priv->tmp_mem)) {
       GST_ERROR_OBJECT(self, "Free mlu memory failed");
     }
     priv->tmp_mem = nullptr;
   }
   if (priv->cncv_workspace) {
-    if (cn_syncedmem_free(priv->cncv_workspace)) {
+    if (!cn_syncedmem_free(priv->cncv_workspace)) {
       GST_ERROR_OBJECT(self, "Free mlu memory failed");
     }
     priv->cncv_workspace = nullptr;
@@ -767,12 +767,12 @@ gst_cnconvert_setcaps(GstCnconvert* self, GstCaps* sinkcaps)
   // config src caps
   switch (priv->sink_info.finfo->format) {
     case GST_VIDEO_FORMAT_NV12:
-      filter_caps = gst_caps_from_string("video/x-raw, format={NV12, ARGB, ABGR, BGRA, RGBA};"
-                                         "video/x-raw(memory:mlu), format={NV12, ARGB, ABGR, BGRA, RGBA};");
+      filter_caps = gst_caps_from_string("video/x-raw, format={NV12, RGB, BGR, ARGB, ABGR, BGRA, RGBA};"
+                                         "video/x-raw(memory:mlu), format={NV12, RGB, BGR, ARGB, ABGR, BGRA, RGBA};");
       break;
     case GST_VIDEO_FORMAT_NV21:
-      filter_caps = gst_caps_from_string("video/x-raw, format={NV21, ARGB, ABGR, BGRA, RGBA};"
-                                         "video/x-raw(memory:mlu), format={NV21, ARGB, ABGR, BGRA, RGBA};");
+      filter_caps = gst_caps_from_string("video/x-raw, format={NV21, RGB, BGR, ARGB, ABGR, BGRA, RGBA};"
+                                         "video/x-raw(memory:mlu), format={NV21, RGB, BGR, ARGB, ABGR, BGRA, RGBA};");
       break;
     case GST_VIDEO_FORMAT_I420:
       filter_caps = gst_caps_from_string("video/x-raw(memory:mlu), format={I420};video/x-raw, format={I420};");
